@@ -1,18 +1,31 @@
-use std::ffi::{c_char, CString};
+use std::ffi::{c_char, c_void, CString};
+use std::mem::size_of;
+use std::ptr::null_mut;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
+use bytemuck::offset_of;
+use glow::HasContext;
+use imgui::{Context, DrawCmd};
+use imgui::internal::{RawCast, RawWrapper};
+use imgui::sys::ImDrawVert;
+use imgui_glow_renderer::TextureMap;
 use sdl2::event::Event;
 use sdl2::EventPump;
 use sdl2::image::{InitFlag, LoadSurface, LoadTexture};
+use sdl2::libc::{c_int, free, malloc, size_t};
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rect::Rect;
-use sdl2::render::{Canvas, Texture, WindowCanvas};
+use sdl2::render::{BlendMode, Canvas, Texture, TextureAccess, WindowCanvas};
 use sdl2::surface::Surface;
 use sdl2::sys::SDL_WindowFlags::SDL_WINDOW_SHOWN;
 use sdl2::ttf::Font;
+use sdl2::video::{GLProfile, Window};
+use sdl2_sys::{SDL_Color, SDL_FPoint, SDL_RenderGeometryRaw, SDL_Texture, SDL_Vertex};
 
-mod virtual_cam;
+use crate::imgui_support::SdlPlatform;
+
+mod imgui_support;
 
 struct SharedData {
     last_frame: SystemTime,
@@ -23,7 +36,12 @@ struct SharedData {
     requires_update: bool,
     should_hover: bool,
     should_open_props: bool,
-    pngtuber_canvas: *mut Canvas<Surface<'static>>
+    pngtuber_canvas: *mut Canvas<Surface<'static>>,
+    should_render_props: bool,
+    is_props_open: bool,
+    imgui: *mut Context,
+    imgui_platform: *mut SdlPlatform,
+    imgui_fonts_texture: *mut Texture
 }
 
 struct SpeechTiming<'a> {
@@ -54,16 +72,27 @@ fn create_missing_tex() -> Surface<'static> {
     return missing_tex;
 }
 
+fn glow_context(window: &Window) -> glow::Context {
+    unsafe {
+        glow::Context::from_loader_function(|s| window.subsystem().gl_get_proc_address(s) as _)
+    }
+}
+
 fn main() {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
     let ttf_context = sdl2::ttf::init().unwrap();
+
+    let gl_attr = video_subsystem.gl_attr();
+    gl_attr.set_context_version(3, 3);
+    gl_attr.set_context_profile(GLProfile::Core);
 
     let font = ttf_context.load_font("C:/Windows/Fonts/ARIALN.TTF", 16).unwrap();
 
     let mut window = video_subsystem.window("Generic Title", 512, 512)
         .position_centered()
         .set_window_flags(SDL_WINDOW_SHOWN as u32)
+        .opengl()
         .build()
         .unwrap();
 
@@ -81,17 +110,51 @@ fn main() {
     let pngtuber_surface = Surface::new(512, 512, PixelFormatEnum::ARGB32).unwrap();
     let mut pngtuber_canvas = Canvas::from_surface(pngtuber_surface).unwrap();
 
+    let gl_context = canvas.window().gl_create_context().unwrap();
+    canvas.window().gl_make_current(&gl_context).unwrap();
+
+    canvas.window().subsystem().gl_set_swap_interval(1).unwrap();
+
+    let mut imgui = Context::create();
+
+    imgui.set_ini_filename(None);
+    imgui.set_log_filename(None);
+
+    let mut platform = SdlPlatform::init(&mut imgui);
+
     let mut data = SharedData {
         last_frame,
         current_velocity: 0.0,
         is_speaking: false,
         speech_timings: Vec::new(),
         requires_update: true,
+        should_render_props: false,
         should_hover: false,
         should_open_props: false,
         current_max_velocity: 0.0,
-        pngtuber_canvas: &mut pngtuber_canvas
+        pngtuber_canvas: &mut pngtuber_canvas,
+        is_props_open: true,
+        imgui: &mut imgui,
+        imgui_platform: &mut platform,
+        imgui_fonts_texture: null_mut()
     };
+
+    imgui
+        .fonts()
+        .add_font(&[imgui::FontSource::DefaultFontData { config: None }]);
+
+    // if you're wondering what the fuck this is meant to be,
+    // I HAVE NO IDEA EITHER.
+    // THIS WAS LITERALLY THE ONLY WAY I COULD FIX THIS.
+    unsafe {
+        let imgui_fonts_texture = &mut (*data.imgui).fonts().build_rgba32_texture();
+
+        let mut sdl_tex = canvas.texture_creator().create_texture(PixelFormatEnum::ARGB8888, TextureAccess::Static, imgui_fonts_texture.width, imgui_fonts_texture.height).unwrap();
+        sdl_tex.update(None, imgui_fonts_texture.data, (4 * imgui_fonts_texture.width) as usize).unwrap();
+        sdl_tex.set_blend_mode(BlendMode::Blend);
+
+        data.imgui_fonts_texture = &mut sdl_tex;
+    }
 
     let png_surface = Surface::from_file("normal.png").unwrap_or(create_missing_tex());
     let png_texture = pngtuber_canvas.create_texture_from_surface(&png_surface).unwrap();
@@ -134,6 +197,12 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     let refresh_rate = 60;
 
     for event in event_pump.poll_iter() {
+        if (&data).is_props_open {
+            unsafe {
+                (*(&data).imgui_platform).handle_event(&mut *(&data).imgui, &event);
+            }
+        }
+
         match event {
             Event::AppTerminating { .. } | Event::Quit { .. } => {
                 return false;
@@ -145,7 +214,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
 
             Event::MouseMotion { x, y, .. } => {
                 let window_size = canvas.window().size();
-                let is_over = is_over_button(window_size.0 as i32, x, y);
+                let is_over = is_over_button(window_size.0 as i32, x, y) && !(&data).is_props_open;
 
                 if !(&data).should_hover && is_over {
                     data.should_hover = true;
@@ -160,18 +229,28 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
         }
     }
 
+    if canvas.window().has_mouse_focus() && !(&data).should_render_props {
+        data.should_render_props = true;
+        data.requires_update = true;
+    } else if !canvas.window().has_mouse_focus() && (&data).should_render_props && !(&data).is_props_open {
+        data.should_render_props = false;
+        data.requires_update = true;
+    }
+
     // Skip rendering, for performance reasons
     if !(&data).requires_update {
         sleep(Duration::new(0, 1_000_000_000u32 / refresh_rate));
         return true;
     }
 
-    data.requires_update = false;
+    if !(&data).is_props_open {
+        data.requires_update = false;
+    }
 
     let current_frame = SystemTime::now();
     let last_frame_time = SystemTime::now().duration_since((&data).last_frame).unwrap();
 
-    canvas.set_draw_color(Color::RGB(0, 0, 0));
+    canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
     canvas.clear();
 
     unsafe {
@@ -200,19 +279,21 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     canvas.copy(&text_tex, None, Option::from(Rect::new(0, 0, text.width(), text.height()))).unwrap();
 
     // Render settings button
-    if (&data).should_hover {
-        canvas.set_draw_color(Color::RGB(175, 175, 175));
-    } else {
-        canvas.set_draw_color(Color::RGB(100, 100, 100));
-    }
-
-    for i in 0..3 {
-        let rect = Rect::new((window_size.0 - 32) as i32, 12 + (i * 6), 24, 4);
-
+    if (&data).should_render_props {
         if (&data).should_hover {
-            canvas.fill_rect(rect).unwrap();
+            canvas.set_draw_color(Color::RGB(175, 175, 175));
         } else {
-            canvas.draw_rect(rect).unwrap();
+            canvas.set_draw_color(Color::RGB(100, 100, 100));
+        }
+
+        for i in 0..3 {
+            let rect = Rect::new((window_size.0 - 32) as i32, 12 + (i * 6), 24, 4);
+
+            if (&data).should_hover {
+                canvas.fill_rect(rect).unwrap();
+            } else {
+                canvas.draw_rect(rect).unwrap();
+            }
         }
     }
 
@@ -221,6 +302,82 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     unsafe {
         text_tex.destroy();
         pngtuber_tex.destroy();
+    }
+
+    if (&data).is_props_open {
+        unsafe {
+            let platform = (&data).imgui_platform;
+            let mut imgui = (&data).imgui;
+
+            (*platform).prepare_frame(&mut *imgui, &canvas.window(), &event_pump);
+
+            let ui = (*imgui).new_frame();
+
+            ui.show_demo_window(&mut true);
+
+            let draw_data = (*imgui).render();
+
+            let raw_draw_data = draw_data.raw();
+            let vertices: *mut SDL_Vertex = malloc((raw_draw_data.TotalVtxCount * (size_of::<SDL_Vertex>() as i32)) as size_t) as *mut SDL_Vertex;
+            let indices: *mut c_int = malloc((raw_draw_data.TotalIdxCount * (size_of::<c_int>() as i32)) as size_t) as *mut c_int;
+
+            for list in draw_data.draw_lists() {
+                let mut vtx_id = 0;
+
+                let vtx_buffer = list.vtx_buffer().as_mut_ptr();
+
+                for vtx in list.vtx_buffer() {
+                    vertices.offset(vtx_id).write(SDL_Vertex {
+                        color: SDL_Color {
+                            r: vtx.col[0],
+                            g: vtx.col[1],
+                            b: vtx.col[2],
+                            a: vtx.col[3]
+                        },
+                        position: SDL_FPoint {
+                            x: vtx.pos[0],
+                            y: vtx.pos[1]
+                        },
+                        tex_coord: SDL_FPoint {
+                            x: vtx.uv[0],
+                            y: vtx.uv[1]
+                        }
+                    });
+
+                    vtx_id += 1;
+                }
+
+                let mut idx_id = 0;
+                for idx in list.idx_buffer() {
+                    indices.offset(idx_id).write((*idx) as u16 as c_int);
+                    idx_id += 1;
+                }
+
+                for cmd in list.commands() {
+                    match cmd {
+                        DrawCmd::Elements { count, cmd_params, .. } => {
+                            let sdl_tex = (*data).imgui_fonts_texture;
+                            let texture: *mut SDL_Texture = (*sdl_tex).raw();
+                            let xy = ((vertices.offset(cmd_params.vtx_offset as isize) as u64) + (offset_of!(*vtx_buffer, ImDrawVert, pos) as u64)) as f32;
+                            let uv = ((vertices.offset(cmd_params.vtx_offset as isize) as u64) + (offset_of!(*vtx_buffer, ImDrawVert, uv) as u64)) as f32;
+                            let vert_size = size_of::<ImDrawVert>();
+
+                            SDL_RenderGeometryRaw(canvas.raw(), texture, &xy, vert_size as c_int, vertices.offset(cmd_params.vtx_offset as isize), count as c_int, indices.offset(cmd_params.idx_offset as isize), count as c_int);
+                        }
+
+                        DrawCmd::ResetRenderState => {
+                        }
+
+                        DrawCmd::RawCallback { callback, raw_cmd, .. } => {
+                            callback(list.raw(), raw_cmd);
+                        }
+                    }
+                }
+            }
+
+            free(vertices as *mut c_void);
+            free(indices as *mut c_void);
+        }
     }
 
     canvas.present();

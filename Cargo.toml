@@ -12,3 +12,7 @@ cpal = { "version" = "0.15.2" }
 ultraviolet = { version = "0.9", features = [ "f64", "int" ] }
 png = "0.17.11"
 sdl2 = { version = "0.36.0", features = ["ttf", "unsafe_textures", "image"] }
+sdl2-sys = { version = "0.36.0" }
+imgui = "0.11.0"
+glow = "0.12.0"
+imgui-glow-renderer = "0.11.0"
