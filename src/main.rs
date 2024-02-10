@@ -12,6 +12,7 @@ use sdl2::event::Event;
 use sdl2::EventPump;
 use sdl2::image::{InitFlag, LoadSurface, LoadTexture};
 use sdl2::libc::{c_int, free, malloc, size_t};
+use sdl2::mouse::MouseButton;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rect::Rect;
 use sdl2::render::{BlendMode, Canvas, Texture, TextureAccess, WindowCanvas};
@@ -30,7 +31,7 @@ struct SharedData {
     current_velocity: f64,
     current_max_velocity: f64,
     is_speaking: bool,
-    speech_timings: Vec<SpeechTiming<'static>>,
+    speech_timings: *mut Vec<SpeechTiming<'static>>,
     requires_update: bool,
     should_hover: bool,
     should_open_props: bool,
@@ -120,14 +121,14 @@ fn main() {
         last_frame,
         current_velocity: 0.0,
         is_speaking: false,
-        speech_timings: Vec::new(),
+        speech_timings: &mut Vec::new(),
         requires_update: true,
         should_render_props: false,
         should_hover: false,
         should_open_props: false,
         current_max_velocity: 0.0,
         pngtuber_canvas: &mut pngtuber_canvas,
-        is_props_open: true,
+        is_props_open: false,
         imgui: &mut imgui,
         imgui_platform: &mut platform,
         imgui_fonts_texture: null_mut()
@@ -166,16 +167,9 @@ fn main() {
     let png_surface = Surface::from_file("normal.png").unwrap_or(create_missing_tex());
     let png_texture = pngtuber_canvas.create_texture_from_surface(&png_surface).unwrap();
 
-    data.speech_timings.insert(0, SpeechTiming {
-        threshold: 0.0,
-        attack_time: 0.0,
-        release_time: 0.0,
-        texture_surface: png_surface,
-        texture: png_texture,
-        max_velocity: 12.0,
-        should_bounce: false,
-        texture_path: String::from("")
-    });
+    unsafe {
+        (*data.speech_timings).insert(0, create_default_timing(&mut data));
+    }
 
     'running: loop {
         if !render(&mut canvas, &mut event_pump, &font, &mut data) {
@@ -184,13 +178,28 @@ fn main() {
     }
 }
 
+fn create_default_timing(data: &mut SharedData) -> SpeechTiming<'static> {
+    return SpeechTiming {
+        threshold: 0.0,
+        attack_time: 0.0,
+        release_time: 0.0,
+        texture_surface: create_missing_tex(),
+        texture: unsafe {
+            (*data.pngtuber_canvas).create_texture_from_surface(create_missing_tex())
+        }.unwrap(),
+        max_velocity: 12.0,
+        should_bounce: false,
+        texture_path: String::from("")
+    };
+}
+
 fn is_over_button(window_width: i32, x: i32, y: i32) -> bool {
     return x > (window_width - 32) && x < window_width && y < 32 && y > 0;
 }
 
 unsafe fn render_pngtuber(window_size: (u32, u32), data: &mut SharedData) {
     let canvas = (&data).pngtuber_canvas;
-    let timing = (&data).speech_timings.first().unwrap();
+    let timing = unsafe { (*(&data).speech_timings).first() }.unwrap();
     let surface = &timing.texture_surface;
     let tex = &timing.texture;
 
@@ -218,7 +227,10 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
             }
 
             Event::MouseButtonDown { mouse_btn, x, y, .. } => {
-
+                if mouse_btn == MouseButton::Left {
+                    data.is_props_open = true;
+                    data.requires_update = true;
+                }
             }
 
             Event::MouseMotion { x, y, .. } => {
@@ -427,10 +439,24 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) {
     if window.is_some() {
         let mut id = 0;
 
-        for mut timing in (*data).speech_timings.iter_mut() {
+        let timings = (*data).speech_timings;
+
+        if ui.button("Add Timing") {
+            (*timings).insert((*timings).len(), create_default_timing(data));
+        }
+
+        if ui.button("Close") {
+            data.is_props_open = false;
+        }
+
+        for timing in (*timings).iter_mut() {
             let group = ui.begin_group();
 
-            if ui.collapsing_header(format!("##{}_group", id), TreeNodeFlags::DEFAULT_OPEN) {
+            if ui.collapsing_header(format!("Timing #{}##{}_group", id + 1, id), TreeNodeFlags::DEFAULT_OPEN) {
+                if ui.button(format!("Remove##{}_remove", id)) {
+                    (*(*data).speech_timings).remove(id);
+                }
+
                 ui.text("Should Bounce?");
                 ui.checkbox(format!("##{}_bounce", id), &mut timing.should_bounce);
 
