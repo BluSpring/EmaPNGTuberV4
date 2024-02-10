@@ -1,0 +1,9 @@
+input_device: ''
+speech_timings:
+- threshold: 0.0
+  attack_time: 0.0
+  release_time: 0.0
+  texture_path: K:\BluSpringStudios\Dev\Stream\Apps\EmaPNGTuberV4\normal.png
+  should_bounce: false
+  max_velocity: 12.0
+  total_velocity_frames: 0

@@ -1,9 +1,12 @@
 use std::ffi::{c_char, c_void, CString};
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
 use std::mem::size_of;
 use std::ptr::null_mut;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
+use close_file::Closable;
 use imgui::{Condition, Context, TreeNodeFlags, Ui};
 use imgui::internal::{RawCast, RawWrapper};
 use mint::Vector2;
@@ -23,6 +26,7 @@ use sdl2::ttf::Font;
 use sdl2::video::GLProfile;
 use sdl2_sys::{SDL_BlendFactor, SDL_BlendOperation, SDL_Color, SDL_ComposeCustomBlendMode, SDL_DestroyTexture, SDL_FPoint, SDL_RenderGeometry, SDL_SetRenderDrawBlendMode, SDL_Texture, SDL_Vertex};
 use serde::{Deserialize, Serialize};
+use serde::de::Error;
 use winsafe::{COLORREF, HWND};
 use winsafe::co::{GWLP, LWA, WS_EX};
 use winsafe::prelude::*;
@@ -54,13 +58,13 @@ struct SharedData {
     current_frame: i32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct SavedData {
     input_device: String,
     speech_timings: Vec<SavedSpeechData>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct SavedSpeechData {
     threshold: f32,
     attack_time: f32,
@@ -101,6 +105,91 @@ fn create_missing_tex() -> Surface<'static> {
     (*missing_tex).fill_rect(Rect::new(128, 128, 128, 128), Color::RGB(243, 60, 241)).unwrap();
 
     missing_tex
+}
+
+fn save(shared_data: &mut SharedData) {
+    let mut saved_data = SavedData {
+        input_device: shared_data.input_device.clone(),
+        speech_timings: Vec::new()
+    };
+
+    for (i, timing) in unsafe { (*shared_data.speech_timings).iter().clone() }.enumerate() {
+        let speech_timing = SavedSpeechData {
+            threshold: timing.threshold,
+            attack_time: timing.attack_time,
+            release_time: timing.release_time,
+            texture_path: timing.texture_path.clone(),
+
+            should_bounce: timing.should_bounce,
+            max_velocity: timing.max_velocity,
+            total_velocity_frames: timing.total_velocity_frames
+        };
+
+        saved_data.speech_timings.insert(i, speech_timing);
+    }
+
+    let serialized = serde_yaml::to_string(&saved_data);
+
+    if serialized.is_err() {
+        eprintln!("Error occurred while serializing: {}", serialized.unwrap_err().to_string().as_str());
+        return;
+    }
+
+    let mut file = OpenOptions::new().write(true).open("pngtuber_data.yml").unwrap_or(File::create("pngtuber_data.yml").unwrap());
+    file.write_all(serialized.unwrap().as_bytes()).unwrap();
+    file.close().unwrap();
+}
+
+fn load(shared_data: &mut SharedData) {
+    let file = File::open("pngtuber_data.yml");
+
+    if file.is_err() {
+        eprintln!("Error occurred while deserializing: {}", file.unwrap_err().to_string().as_str());
+        return;
+    }
+
+    let mut contents = String::new();
+    let mut file_thing = file.unwrap();
+    file_thing.read_to_string(&mut contents).unwrap();
+
+    let saved_data_opt: Result<SavedData, serde_yaml::Error> = serde_yaml::from_str(contents.as_str());
+
+    if saved_data_opt.is_err() {
+        eprintln!("Failed to deserialize data, reverting to defaults! Error: {}", saved_data_opt.unwrap_err().to_string().as_str());
+        file_thing.close().unwrap();
+        return;
+    }
+
+    let saved_data: SavedData = saved_data_opt.unwrap();
+
+    shared_data.input_device = saved_data.input_device;
+    for (i, timing) in saved_data.speech_timings.iter().enumerate() {
+        let texture_path = timing.texture_path.clone();
+        let png_surface = Surface::from_file(texture_path).unwrap_or(create_missing_tex());
+        // i thought this was already in unsafe but okay
+        let png_texture = unsafe { (*shared_data.pngtuber_canvas).create_texture_from_surface(&png_surface).unwrap() };
+
+        let speech_timing = SpeechTiming {
+            threshold: timing.threshold,
+            attack_time: timing.attack_time,
+            release_time: timing.release_time,
+
+            texture_path: timing.texture_path.clone(), // thanks rust.
+            texture_surface: png_surface,
+            texture: png_texture,
+
+            should_bounce: timing.should_bounce,
+            max_velocity: timing.max_velocity,
+            total_velocity_frames: timing.total_velocity_frames
+        };
+
+        let timings = shared_data.speech_timings;
+        unsafe {
+            (*timings).insert(i, speech_timing);
+        }
+    }
+
+    file_thing.close().unwrap();
 }
 
 fn main() {
@@ -211,8 +300,16 @@ fn main() {
         SDL_SetRenderDrawBlendMode(canvas.raw(), blend_mode);
     }
 
+    load(&mut data);
+
     unsafe {
-        (*data.speech_timings).insert(0, create_default_timing(&mut data));
+        if (*data.speech_timings).is_empty() {
+            canvas.window_mut().set_bordered(true);
+            data.is_bordered = true;
+            data.should_open_props = true;
+            data.is_props_open = true;
+            data.should_render_props = true;
+        }
     }
 
     'running: loop {
@@ -244,6 +341,10 @@ fn is_over_button(window_width: i32, x: i32, y: i32) -> bool {
 
 unsafe fn render_pngtuber(window_size: (u32, u32), data: &mut SharedData) {
     let canvas = data.pngtuber_canvas;
+    if (*data.speech_timings).is_empty() {
+        return;
+    }
+
     let timing = unsafe { (*data.speech_timings).first() }.unwrap();
     let surface = &timing.texture_surface;
     let tex = &timing.texture;
@@ -257,7 +358,7 @@ unsafe fn render_pngtuber(window_size: (u32, u32), data: &mut SharedData) {
 }
 
 fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, data: &mut SharedData) -> bool {
-    let refresh_rate = 60;
+    let refresh_rate = 90;
 
     for event in event_pump.poll_iter() {
         if data.is_props_open {
@@ -360,6 +461,9 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
 
     // Render settings button
     if data.should_render_props {
+        canvas.set_draw_color(Color::RGB(34, 34, 34));
+        canvas.fill_rect(Rect::new((window_size.0 - 32) as i32, 0, 24, 24)).unwrap();
+
         if data.should_hover {
             canvas.set_draw_color(Color::RGB(175, 175, 175));
         } else {
@@ -481,7 +585,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     // "VSync"
     sleep(Duration::new(0, 1_000_000_000u32 / refresh_rate));
 
-    return true;
+    true
 }
 
 unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
@@ -504,6 +608,7 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
 
         if ui.button("Close Properties") {
             data.is_props_open = false;
+            save(data);
         }
 
         ui.same_line();
@@ -520,7 +625,7 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
             if ui.collapsing_header(format!("Timing #{}##{}_group", id + 1, id), TreeNodeFlags::DEFAULT_OPEN) {
                 ui.indent_by(4.0);
                 if ui.button(format!("Remove##{}_remove", id)) {
-                    (*(*data).speech_timings).remove(id);
+                    (*data.speech_timings).remove(id);
                 }
 
                 ui.spacing();
@@ -536,7 +641,7 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
                 ui.text("Release (ms)");
                 ui.slider(format!("##{}_release", id), 0.0, 150.0, &mut timing.release_time);
 
-                if (*timing).should_bounce {
+                if timing.should_bounce {
                     ui.text("Total Bounce Frames");
                     ui.slider(format!("##{}_velocity_frames", id), 0, 600, &mut timing.total_velocity_frames);
 
@@ -556,12 +661,12 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
                         .set_title("Select Image File")
                         .pick_file();
 
-                    if (&file).is_some() {
-                        let file_path = (&file).as_ref().unwrap().to_str().unwrap();
+                    if file.is_some() {
+                        let file_path = file.as_ref().unwrap().to_str().unwrap();
 
                         timing.texture_path = String::from(file_path);
 
-                        drop((&timing.texture_surface).context());
+                        drop(timing.texture_surface.context());
                         unsafe {
                             // this works better than the Rust destroy because Rust is too safe.
                             SDL_DestroyTexture(timing.texture.raw());
