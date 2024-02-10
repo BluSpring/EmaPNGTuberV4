@@ -14,5 +14,5 @@ png = "0.17.11"
 sdl2 = { version = "0.36.0", features = ["ttf", "unsafe_textures", "image"] }
 sdl2-sys = { version = "0.36.0" }
 imgui = "0.11.0"
-glow = "0.12.0"
-imgui-glow-renderer = "0.11.0"
+mint = "0.5.9"
+rfd = "0.13.0"

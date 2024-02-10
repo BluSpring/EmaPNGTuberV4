@@ -4,12 +4,10 @@ use std::ptr::null_mut;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
-use bytemuck::offset_of;
-use glow::HasContext;
-use imgui::{Context, DrawCmd};
+use imgui::{Condition, Context, TreeNodeFlags, Ui};
 use imgui::internal::{RawCast, RawWrapper};
-use imgui::sys::ImDrawVert;
-use imgui_glow_renderer::TextureMap;
+use mint::Vector2;
+use rfd::FileDialog;
 use sdl2::event::Event;
 use sdl2::EventPump;
 use sdl2::image::{InitFlag, LoadSurface, LoadTexture};
@@ -20,8 +18,8 @@ use sdl2::render::{BlendMode, Canvas, Texture, TextureAccess, WindowCanvas};
 use sdl2::surface::Surface;
 use sdl2::sys::SDL_WindowFlags::SDL_WINDOW_SHOWN;
 use sdl2::ttf::Font;
-use sdl2::video::{GLProfile, Window};
-use sdl2_sys::{SDL_Color, SDL_FPoint, SDL_RenderGeometryRaw, SDL_Texture, SDL_Vertex};
+use sdl2::video::GLProfile;
+use sdl2_sys::{SDL_BlendFactor, SDL_BlendOperation, SDL_Color, SDL_ComposeCustomBlendMode, SDL_DestroyTexture, SDL_FPoint, SDL_RenderGeometry, SDL_SetRenderDrawBlendMode, SDL_Texture, SDL_Vertex};
 
 use crate::imgui_support::SdlPlatform;
 
@@ -45,12 +43,14 @@ struct SharedData {
 }
 
 struct SpeechTiming<'a> {
-    threshold: f64,
-    attack_time: f64,
-    release_time: f64,
+    threshold: f32,
+    attack_time: f32,
+    release_time: f32,
+    texture_path: String,
     texture_surface: Surface<'a>,
     texture: Texture,
-    max_velocity: f64,
+    max_velocity: f32,
+    should_bounce: bool,
 }
 
 fn str_to_c(text: &str) -> *const c_char {
@@ -70,12 +70,6 @@ fn create_missing_tex() -> Surface<'static> {
     (*missing_tex).fill_rect(Rect::new(128, 128, 128, 128), Color::RGB(243, 60, 241)).unwrap();
 
     return missing_tex;
-}
-
-fn glow_context(window: &Window) -> glow::Context {
-    unsafe {
-        glow::Context::from_loader_function(|s| window.subsystem().gl_get_proc_address(s) as _)
-    }
 }
 
 fn main() {
@@ -156,6 +150,19 @@ fn main() {
         data.imgui_fonts_texture = &mut sdl_tex;
     }
 
+    unsafe {
+        let blend_mode = SDL_ComposeCustomBlendMode(
+            SDL_BlendFactor::SDL_BLENDFACTOR_SRC_ALPHA,
+            SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            SDL_BlendOperation::SDL_BLENDOPERATION_ADD,
+            SDL_BlendFactor::SDL_BLENDFACTOR_ONE,
+            SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            SDL_BlendOperation::SDL_BLENDOPERATION_ADD
+        );
+
+        SDL_SetRenderDrawBlendMode(canvas.raw(), blend_mode);
+    }
+
     let png_surface = Surface::from_file("normal.png").unwrap_or(create_missing_tex());
     let png_texture = pngtuber_canvas.create_texture_from_surface(&png_surface).unwrap();
 
@@ -165,7 +172,9 @@ fn main() {
         release_time: 0.0,
         texture_surface: png_surface,
         texture: png_texture,
-        max_velocity: 12.0
+        max_velocity: 12.0,
+        should_bounce: false,
+        texture_path: String::from("")
     });
 
     'running: loop {
@@ -313,7 +322,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
 
             let ui = (*imgui).new_frame();
 
-            ui.show_demo_window(&mut true);
+            render_ui(ui, data);
 
             let draw_data = (*imgui).render();
 
@@ -323,8 +332,6 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
 
             for list in draw_data.draw_lists() {
                 let mut vtx_id = 0;
-
-                let vtx_buffer = list.vtx_buffer().as_mut_ptr();
 
                 for vtx in list.vtx_buffer() {
                     vertices.offset(vtx_id).write(SDL_Vertex {
@@ -353,27 +360,45 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
                     idx_id += 1;
                 }
 
+                // flicker problems, if you manage to fix it lmk
+                /*canvas.set_clip_rect(None);
+
                 for cmd in list.commands() {
                     match cmd {
                         DrawCmd::Elements { count, cmd_params, .. } => {
+                            canvas.set_clip_rect(Rect::new(cmd_params.clip_rect[0] as i32, cmd_params.clip_rect[1] as i32, (cmd_params.clip_rect[2] - cmd_params.clip_rect[0]) as u32, (cmd_params.clip_rect[3] - cmd_params.clip_rect[1]) as u32));
+
                             let sdl_tex = (*data).imgui_fonts_texture;
                             let texture: *mut SDL_Texture = (*sdl_tex).raw();
-                            let xy = ((vertices.offset(cmd_params.vtx_offset as isize) as u64) + (offset_of!(*vtx_buffer, ImDrawVert, pos) as u64)) as f32;
-                            let uv = ((vertices.offset(cmd_params.vtx_offset as isize) as u64) + (offset_of!(*vtx_buffer, ImDrawVert, uv) as u64)) as f32;
-                            let vert_size = size_of::<ImDrawVert>();
 
-                            SDL_RenderGeometryRaw(canvas.raw(), texture, &xy, vert_size as c_int, vertices.offset(cmd_params.vtx_offset as isize), count as c_int, indices.offset(cmd_params.idx_offset as isize), count as c_int);
+                            SDL_RenderGeometry(canvas.raw(), texture, vertices.offset(cmd_params.vtx_offset as isize), count as c_int, indices.offset(cmd_params.idx_offset as isize), count as c_int);
                         }
 
-                        DrawCmd::ResetRenderState => {
-                        }
-
-                        DrawCmd::RawCallback { callback, raw_cmd, .. } => {
-                            callback(list.raw(), raw_cmd);
-                        }
+                        _ => {}
                     }
-                }
+                }*/
             }
+
+            // just render it all at once, it's easier lmao.
+            canvas.set_clip_rect(Rect::new((512 / 2) - (420 / 2), (512 / 2) - (356 / 2), 420, 356));
+
+            let blend_mode = SDL_ComposeCustomBlendMode(
+                SDL_BlendFactor::SDL_BLENDFACTOR_SRC_ALPHA,
+                SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                SDL_BlendOperation::SDL_BLENDOPERATION_ADD,
+                SDL_BlendFactor::SDL_BLENDFACTOR_ONE,
+                SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                SDL_BlendOperation::SDL_BLENDOPERATION_ADD
+            );
+
+            SDL_SetRenderDrawBlendMode(canvas.raw(), blend_mode);
+
+            let sdl_tex = (*data).imgui_fonts_texture;
+            let texture: *mut SDL_Texture = (*sdl_tex).raw();
+
+            SDL_RenderGeometry(canvas.raw(), texture, vertices, draw_data.total_vtx_count as c_int, indices, draw_data.total_idx_count as c_int);
+
+            canvas.set_clip_rect(None);
 
             free(vertices as *mut c_void);
             free(indices as *mut c_void);
@@ -388,4 +413,77 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     sleep(Duration::new(0, 1_000_000_000u32 / refresh_rate));
 
     return true;
+}
+
+unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) {
+    let window = ui.window("Properties")
+        .size(Vector2::from([ 420.0, 356.0 ]), Condition::Always)
+        .position(Vector2::from([ (512.0 / 2.0) - (420.0 / 2.0), (512.0 / 2.0) - (356.0 / 2.0) ]), Condition::Always)
+        .title_bar(true)
+        .scrollable(true)
+        .draw_background(true)
+        .begin();
+
+    if window.is_some() {
+        let mut id = 0;
+
+        for mut timing in (*data).speech_timings.iter_mut() {
+            let group = ui.begin_group();
+
+            if ui.collapsing_header(format!("##{}_group", id), TreeNodeFlags::DEFAULT_OPEN) {
+                ui.text("Should Bounce?");
+                ui.checkbox(format!("##{}_bounce", id), &mut timing.should_bounce);
+
+                ui.text("Threshold (dB)");
+                ui.slider(format!("##{}_threshold", id), 0.0, 1.0, &mut timing.threshold);
+
+                ui.text("Attack (ms)");
+                ui.slider(format!("##{}_attack", id), 0.0, 150.0, &mut timing.attack_time);
+
+                ui.text("Release (ms)");
+                ui.slider(format!("##{}_release", id), 0.0, 150.0, &mut timing.release_time);
+
+                if (*timing).should_bounce {
+                    ui.text("Max Bounce Velocity");
+                    ui.slider(format!("##{}_max_velocity", id), 0.0, 64.0, &mut timing.max_velocity);
+                }
+
+                ui.text("Texture Path");
+                ui.input_text(format!("##{}_tex_path", id), &mut timing.texture_path)
+                    .build();
+
+                if ui.button(format!("Open Path##{}_open_path", id)) {
+                    let file = FileDialog::new()
+                        .add_filter("Image files", &["png", "webp"])
+                        .set_title("Select Image File")
+                        .pick_file();
+
+                    if (&file).is_some() {
+                        let file_path = (&file).as_ref().unwrap().to_str().unwrap();
+
+                        timing.texture_path = String::from(file_path);
+
+                        drop((&timing.texture_surface).context());
+                        unsafe {
+                            // this works better than the Rust destroy because Rust is too safe.
+                            SDL_DestroyTexture(timing.texture.raw());
+                        }
+
+                        let png_surface = Surface::from_file(file_path).unwrap_or(create_missing_tex());
+                        // i thought this was already in unsafe but okay
+                        let png_texture = unsafe { (*data.pngtuber_canvas).create_texture_from_surface(&png_surface).unwrap() };
+
+                        timing.texture_surface = png_surface;
+                        timing.texture = png_texture;
+                    }
+                }
+            }
+
+            group.end();
+
+            id += 1;
+        }
+
+        window.unwrap().end();
+    }
 }
