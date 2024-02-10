@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 use imgui::{Condition, Context, TreeNodeFlags, Ui};
 use imgui::internal::{RawCast, RawWrapper};
 use mint::Vector2;
+use raw_window_handle::HasRawWindowHandle;
 use rfd::FileDialog;
 use sdl2::event::Event;
 use sdl2::EventPump;
@@ -21,6 +22,7 @@ use sdl2::sys::SDL_WindowFlags::SDL_WINDOW_SHOWN;
 use sdl2::ttf::Font;
 use sdl2::video::GLProfile;
 use sdl2_sys::{SDL_BlendFactor, SDL_BlendOperation, SDL_Color, SDL_ComposeCustomBlendMode, SDL_DestroyTexture, SDL_FPoint, SDL_RenderGeometry, SDL_SetRenderDrawBlendMode, SDL_Texture, SDL_Vertex};
+use winsafe::prelude::*;
 
 use crate::imgui_support::SdlPlatform;
 
@@ -40,7 +42,8 @@ struct SharedData {
     is_props_open: bool,
     imgui: *mut Context,
     imgui_platform: *mut SdlPlatform,
-    imgui_fonts_texture: *mut Texture
+    imgui_fonts_texture: *mut Texture,
+    is_bordered: bool
 }
 
 struct SpeechTiming<'a> {
@@ -87,6 +90,7 @@ fn main() {
     let mut window = video_subsystem.window("Generic Title", 512, 512)
         .position_centered()
         .set_window_flags(SDL_WINDOW_SHOWN as u32)
+        .borderless()
         .opengl()
         .build()
         .unwrap();
@@ -95,8 +99,22 @@ fn main() {
 
     let mut canvas = window.into_canvas().build().unwrap();
 
-    canvas.set_draw_color(Color::RGB(0, 0, 0));
+    canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
     canvas.clear();
+
+    /*unsafe {
+        match canvas.window().raw_window_handle() {
+            RawWindowHandle::Win32(handle) => {
+                let hwnd = handle.hwnd as *mut HWND;
+
+                (*hwnd).SetWindowLongPtr(GWLP::EXSTYLE, (*hwnd).GetWindowLongPtr(GWLP::EXSTYLE) | (WS_EX::LAYERED.raw() as isize));
+                (*hwnd).SetLayeredWindowAttributes(COLORREF::new(0, 0, 0), 0, LWA::ALPHA).unwrap();
+            }
+
+            _ => {}
+        }
+    }*/
+
     canvas.present();
 
     let mut event_pump = sdl_context.event_pump().unwrap();
@@ -131,7 +149,8 @@ fn main() {
         is_props_open: false,
         imgui: &mut imgui,
         imgui_platform: &mut platform,
-        imgui_fonts_texture: null_mut()
+        imgui_fonts_texture: null_mut(),
+        is_bordered: false
     };
 
     imgui
@@ -226,15 +245,28 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
                 return false;
             }
 
+            Event::AppDidEnterBackground { .. } |
+            Event::AppWillEnterBackground { .. }
+            => {
+                data.requires_update = true;
+            }
+
             Event::MouseButtonDown { mouse_btn, x, y, .. } => {
-                if mouse_btn == MouseButton::Left {
+                let window_size = canvas.window().size();
+
+                if mouse_btn == MouseButton::Left && is_over_button(window_size.0 as i32, x, y) {
                     data.is_props_open = true;
+                    data.requires_update = true;
+                } else if mouse_btn == MouseButton::Right {
+                    let window = canvas.window_mut();
+                    data.is_bordered = !(&data).is_bordered;
+                    window.set_bordered((&data).is_bordered);
                     data.requires_update = true;
                 }
             }
 
             Event::MouseMotion { x, y, .. } => {
-                let window_size = canvas.window().size();
+                let window_size = (&canvas).window().size();
                 let is_over = is_over_button(window_size.0 as i32, x, y) && !(&data).is_props_open;
 
                 if !(&data).should_hover && is_over {
@@ -275,7 +307,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     canvas.clear();
 
     unsafe {
-        (*(&data).pngtuber_canvas).set_draw_color(Color::RGB(0, 0, 0));
+        (*(&data).pngtuber_canvas).set_draw_color(Color::RGBA(0, 0, 0, 0));
         (*(&data).pngtuber_canvas).clear();
     }
 

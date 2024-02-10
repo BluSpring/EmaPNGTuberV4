@@ -11,8 +11,10 @@ gl33 = "0.2.1"
 cpal = { "version" = "0.15.2" }
 ultraviolet = { version = "0.9", features = [ "f64", "int" ] }
 png = "0.17.11"
-sdl2 = { version = "0.36.0", features = ["ttf", "unsafe_textures", "image"] }
+sdl2 = { version = "0.36.0", features = [ "ttf", "unsafe_textures", "image", "raw-window-handle" ] }
 sdl2-sys = { version = "0.36.0" }
 imgui = "0.11.0"
 mint = "0.5.9"
 rfd = "0.13.0"
+winsafe = { version = "0.0.19", features = [ "kernel", "user" ] }
+raw-window-handle = "0.5.0"
