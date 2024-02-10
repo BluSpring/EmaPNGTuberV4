@@ -18,3 +18,5 @@ mint = "0.5.9"
 rfd = "0.13.0"
 winsafe = { version = "0.0.19", features = [ "kernel", "user" ] }
 raw-window-handle = "0.5.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"

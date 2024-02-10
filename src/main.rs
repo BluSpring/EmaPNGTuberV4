@@ -22,6 +22,7 @@ use sdl2::sys::SDL_WindowFlags::SDL_WINDOW_SHOWN;
 use sdl2::ttf::Font;
 use sdl2::video::GLProfile;
 use sdl2_sys::{SDL_BlendFactor, SDL_BlendOperation, SDL_Color, SDL_ComposeCustomBlendMode, SDL_DestroyTexture, SDL_FPoint, SDL_RenderGeometry, SDL_SetRenderDrawBlendMode, SDL_Texture, SDL_Vertex};
+use serde::{Deserialize, Serialize};
 use winsafe::{COLORREF, HWND};
 use winsafe::co::{GWLP, LWA, WS_EX};
 use winsafe::prelude::*;
@@ -45,7 +46,30 @@ struct SharedData {
     imgui: *mut Context,
     imgui_platform: *mut SdlPlatform,
     imgui_fonts_texture: *mut Texture,
-    is_bordered: bool
+    is_bordered: bool,
+    input_device: String,
+    input_device_index: usize,
+    input_devices: *mut Vec<String>,
+    current_max_frames: i32,
+    current_frame: i32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedData {
+    input_device: String,
+    speech_timings: Vec<SavedSpeechData>
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedSpeechData {
+    threshold: f32,
+    attack_time: f32,
+    release_time: f32,
+    texture_path: String,
+
+    should_bounce: bool,
+    max_velocity: f32,
+    total_velocity_frames: i32
 }
 
 struct SpeechTiming<'a> {
@@ -57,6 +81,7 @@ struct SpeechTiming<'a> {
     texture: Texture,
     max_velocity: f32,
     should_bounce: bool,
+    total_velocity_frames: i32,
 }
 
 fn str_to_c(text: &str) -> *const c_char {
@@ -75,7 +100,7 @@ fn create_missing_tex() -> Surface<'static> {
     (*missing_tex).fill_rect(Rect::new(0, 128, 128, 128), Color::RGB(0, 0, 0)).unwrap();
     (*missing_tex).fill_rect(Rect::new(128, 128, 128, 128), Color::RGB(243, 60, 241)).unwrap();
 
-    return missing_tex;
+    missing_tex
 }
 
 fn main() {
@@ -89,7 +114,7 @@ fn main() {
 
     let font = ttf_context.load_font("C:/Windows/Fonts/ARIALN.TTF", 16).unwrap();
 
-    let mut window = video_subsystem.window("Generic Title", 512, 512)
+    let window = video_subsystem.window("Generic Title", 512, 512)
         .position_centered()
         .set_window_flags(SDL_WINDOW_SHOWN as u32)
         .borderless()
@@ -105,15 +130,11 @@ fn main() {
     canvas.clear();
 
     unsafe {
-        match canvas.window().raw_window_handle() {
-            RawWindowHandle::Win32(handle) => {
-                let hwnd: HWND = Handle::from_ptr(handle.hwnd);
+        if let RawWindowHandle::Win32(handle) = canvas.window().raw_window_handle() {
+            let hwnd: HWND = Handle::from_ptr(handle.hwnd);
 
-                hwnd.SetWindowLongPtr(GWLP::EXSTYLE, hwnd.GetWindowLongPtr(GWLP::EXSTYLE) | (WS_EX::LAYERED.raw() as isize));
-                hwnd.SetLayeredWindowAttributes(COLORREF::new(14, 14, 14), 0, LWA::COLORKEY).unwrap();
-            }
-
-            _ => {}
+            hwnd.SetWindowLongPtr(GWLP::EXSTYLE, hwnd.GetWindowLongPtr(GWLP::EXSTYLE) | (WS_EX::LAYERED.raw() as isize));
+            hwnd.SetLayeredWindowAttributes(COLORREF::new(14, 14, 14), 0, LWA::COLORKEY).unwrap();
         }
     }
 
@@ -140,19 +161,24 @@ fn main() {
     let mut data = SharedData {
         last_frame,
         current_velocity: 0.0,
+        current_max_velocity: 0.0,
+        current_frame: 0,
+        current_max_frames: 0,
         is_speaking: false,
         speech_timings: &mut Vec::new(),
         requires_update: true,
         should_render_props: false,
         should_hover: false,
         should_open_props: false,
-        current_max_velocity: 0.0,
         pngtuber_canvas: &mut pngtuber_canvas,
         is_props_open: false,
         imgui: &mut imgui,
         imgui_platform: &mut platform,
         imgui_fonts_texture: null_mut(),
-        is_bordered: false
+        is_bordered: false,
+        input_device: String::from(""),
+        input_device_index: 0,
+        input_devices: &mut Vec::new()
     };
 
     imgui
@@ -185,9 +211,6 @@ fn main() {
         SDL_SetRenderDrawBlendMode(canvas.raw(), blend_mode);
     }
 
-    let png_surface = Surface::from_file("normal.png").unwrap_or(create_missing_tex());
-    let png_texture = pngtuber_canvas.create_texture_from_surface(&png_surface).unwrap();
-
     unsafe {
         (*data.speech_timings).insert(0, create_default_timing(&mut data));
     }
@@ -200,7 +223,7 @@ fn main() {
 }
 
 fn create_default_timing(data: &mut SharedData) -> SpeechTiming<'static> {
-    return SpeechTiming {
+    SpeechTiming {
         threshold: 0.0,
         attack_time: 0.0,
         release_time: 0.0,
@@ -210,35 +233,36 @@ fn create_default_timing(data: &mut SharedData) -> SpeechTiming<'static> {
         }.unwrap(),
         max_velocity: 12.0,
         should_bounce: false,
-        texture_path: String::from("")
-    };
+        texture_path: String::from(""),
+        total_velocity_frames: 0
+    }
 }
 
 fn is_over_button(window_width: i32, x: i32, y: i32) -> bool {
-    return x > (window_width - 32) && x < window_width && y < 32 && y > 0;
+    x > (window_width - 32) && x < window_width && y < 32 && y > 0
 }
 
 unsafe fn render_pngtuber(window_size: (u32, u32), data: &mut SharedData) {
-    let canvas = (&data).pngtuber_canvas;
-    let timing = unsafe { (*(&data).speech_timings).first() }.unwrap();
+    let canvas = data.pngtuber_canvas;
+    let timing = unsafe { (*data.speech_timings).first() }.unwrap();
     let surface = &timing.texture_surface;
     let tex = &timing.texture;
 
-    let width = (&surface).width();
-    let height = (&surface).height();
+    let width = surface.width();
+    let height = surface.height();
 
     let height_percent = ((window_size.1 - 24) as f64) / (height as f64);
     let new_width = ((width as f64) * height_percent) as u32;
-    (*canvas).copy(&tex, None, Option::from(Rect::new(((window_size.0 / 2) - new_width / 2) as i32, 0, new_width, height))).unwrap();
+    (*canvas).copy(tex, None, Option::from(Rect::new(((window_size.0 / 2) - new_width / 2) as i32, 0, new_width, height))).unwrap();
 }
 
 fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, data: &mut SharedData) -> bool {
     let refresh_rate = 60;
 
     for event in event_pump.poll_iter() {
-        if (&data).is_props_open {
+        if data.is_props_open {
             unsafe {
-                (*(&data).imgui_platform).handle_event(&mut *(&data).imgui, &event);
+                (*data.imgui_platform).handle_event(&mut *data.imgui, &event);
             }
         }
 
@@ -261,21 +285,21 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
                     data.requires_update = true;
                 } else if mouse_btn == MouseButton::Right {
                     let window = canvas.window_mut();
-                    data.is_bordered = !(&data).is_bordered;
-                    data.should_render_props = !(&data).should_render_props;
-                    window.set_bordered((&data).is_bordered);
+                    data.is_bordered = !data.is_bordered;
+                    data.should_render_props = !data.should_render_props;
+                    window.set_bordered(data.is_bordered);
                     data.requires_update = true;
                 }
             }
 
             Event::MouseMotion { x, y, .. } => {
-                let window_size = (&canvas).window().size();
-                let is_over = is_over_button(window_size.0 as i32, x, y) && !(&data).is_props_open;
+                let window_size = canvas.window().size();
+                let is_over = is_over_button(window_size.0 as i32, x, y) && !data.is_props_open;
 
-                if !(&data).should_hover && is_over {
+                if !data.should_hover && is_over {
                     data.should_hover = true;
                     data.requires_update = true;
-                } else if (&data).should_hover && !is_over {
+                } else if data.should_hover && !is_over {
                     data.should_hover = false;
                     data.requires_update = true;
                 }
@@ -294,24 +318,24 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     }*/
 
     // Skip rendering, for performance reasons
-    if !(&data).requires_update {
+    if !data.requires_update {
         sleep(Duration::new(0, 1_000_000_000u32 / refresh_rate));
         return true;
     }
 
-    if !(&data).is_props_open {
+    if !data.is_props_open {
         data.requires_update = false;
     }
 
     let current_frame = SystemTime::now();
-    let last_frame_time = SystemTime::now().duration_since((&data).last_frame).unwrap();
+    let last_frame_time = SystemTime::now().duration_since(data.last_frame).unwrap();
 
     canvas.set_draw_color(Color::RGBA(14, 14, 14, 0));
     canvas.clear();
 
     unsafe {
-        (*(&data).pngtuber_canvas).set_draw_color(Color::RGBA(0, 0, 0, 0));
-        (*(&data).pngtuber_canvas).clear();
+        (*data.pngtuber_canvas).set_draw_color(Color::RGBA(0, 0, 0, 0));
+        (*data.pngtuber_canvas).clear();
     }
 
     let window_size = canvas.window().size();
@@ -321,12 +345,12 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
         render_pngtuber(window_size, data);
     }
 
-    let pngtuber_tex = canvas.create_texture_from_surface(unsafe { (*(&data).pngtuber_canvas).surface() }).unwrap();
+    let pngtuber_tex = canvas.create_texture_from_surface(unsafe { (*data.pngtuber_canvas).surface() }).unwrap();
 
     canvas.copy(&pngtuber_tex, None, None).unwrap();
 
     // Render total FPS, not actually needed
-    let text = (&font).render(&*format!("{} FPS", (1f32 / ((last_frame_time.as_millis() as f32) / 1000.0)) as u32))
+    let text = font.render(&format!("{} FPS", (1f32 / ((last_frame_time.as_millis() as f32) / 1000.0)) as u32))
         .solid(Color::WHITE)
         .unwrap();
 
@@ -335,8 +359,8 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     canvas.copy(&text_tex, None, Option::from(Rect::new(0, 0, text.width(), text.height()))).unwrap();
 
     // Render settings button
-    if (&data).should_render_props {
-        if (&data).should_hover {
+    if data.should_render_props {
+        if data.should_hover {
             canvas.set_draw_color(Color::RGB(175, 175, 175));
         } else {
             canvas.set_draw_color(Color::RGB(100, 100, 100));
@@ -345,7 +369,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
         for i in 0..3 {
             let rect = Rect::new((window_size.0 - 32) as i32, 12 + (i * 6), 24, 4);
 
-            if (&data).should_hover {
+            if data.should_hover {
                 canvas.fill_rect(rect).unwrap();
             } else {
                 canvas.draw_rect(rect).unwrap();
@@ -354,18 +378,18 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     }
 
     // Free some memory
-    drop((&text).context());
+    drop(text.context());
     unsafe {
         text_tex.destroy();
         pngtuber_tex.destroy();
     }
 
-    if (&data).is_props_open {
+    if data.is_props_open {
         unsafe {
-            let platform = (&data).imgui_platform;
-            let mut imgui = (&data).imgui;
+            let platform = data.imgui_platform;
+            let imgui = data.imgui;
 
-            (*platform).prepare_frame(&mut *imgui, &canvas.window(), &event_pump);
+            (*platform).prepare_frame(&mut *imgui, canvas.window(), event_pump);
 
             let ui = (*imgui).new_frame();
 
@@ -380,10 +404,9 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
             let indices: *mut c_int = malloc((raw_draw_data.TotalIdxCount * (size_of::<c_int>() as i32)) as size_t) as *mut c_int;
 
             for list in draw_data.draw_lists() {
-                let mut vtx_id = 0;
-
-                for vtx in list.vtx_buffer() {
-                    vertices.offset(vtx_id).write(SDL_Vertex {
+                for vtx_id in 0..list.vtx_buffer().len() {
+                    let vtx = list.vtx_buffer().get(vtx_id).unwrap();
+                    vertices.add(vtx_id).write(SDL_Vertex {
                         color: SDL_Color {
                             r: vtx.col[0],
                             g: vtx.col[1],
@@ -399,14 +422,11 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
                             y: vtx.uv[1]
                         }
                     });
-
-                    vtx_id += 1;
                 }
 
-                let mut idx_id = 0;
-                for idx in list.idx_buffer() {
-                    indices.offset(idx_id).write((*idx) as u16 as c_int);
-                    idx_id += 1;
+                for idx_id in 0..list.idx_buffer().len() {
+                    let idx = list.idx_buffer().get(idx_id).unwrap();
+                    indices.add(idx_id).write((*idx) as c_int);
                 }
 
                 // flicker problems, if you manage to fix it lmk
@@ -442,7 +462,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
 
             SDL_SetRenderDrawBlendMode(canvas.raw(), blend_mode);
 
-            let sdl_tex = (*data).imgui_fonts_texture;
+            let sdl_tex = data.imgui_fonts_texture;
             let texture: *mut SDL_Texture = (*sdl_tex).raw();
 
             SDL_RenderGeometry(canvas.raw(), texture, vertices, draw_data.total_vtx_count as c_int, indices, draw_data.total_idx_count as c_int);
@@ -474,9 +494,7 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
         .begin();
 
     if window.is_some() {
-        let mut id = 0;
-
-        let timings = (*data).speech_timings;
+        let timings = data.speech_timings;
 
         if ui.button("Add Timing") {
             (*timings).insert((*timings).len(), create_default_timing(data));
@@ -494,7 +512,9 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
             return false;
         }
 
-        for timing in (*timings).iter_mut() {
+        ui.combo_simple_string("Input Device", &mut data.input_device_index, &**data.input_devices);
+
+        for (id, timing) in (*timings).iter_mut().enumerate() {
             let group = ui.begin_group();
 
             if ui.collapsing_header(format!("Timing #{}##{}_group", id + 1, id), TreeNodeFlags::DEFAULT_OPEN) {
@@ -517,6 +537,9 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
                 ui.slider(format!("##{}_release", id), 0.0, 150.0, &mut timing.release_time);
 
                 if (*timing).should_bounce {
+                    ui.text("Total Bounce Frames");
+                    ui.slider(format!("##{}_velocity_frames", id), 0, 600, &mut timing.total_velocity_frames);
+
                     ui.text("Max Bounce Velocity");
                     ui.slider(format!("##{}_max_velocity", id), 0.0, 64.0, &mut timing.max_velocity);
                 }
@@ -558,12 +581,10 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
             }
 
             group.end();
-
-            id += 1;
         }
 
         window.unwrap().end();
     }
 
-    return true;
+    true
 }
