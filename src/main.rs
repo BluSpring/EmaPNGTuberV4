@@ -262,6 +262,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
                 } else if mouse_btn == MouseButton::Right {
                     let window = canvas.window_mut();
                     data.is_bordered = !(&data).is_bordered;
+                    data.should_render_props = !(&data).should_render_props;
                     window.set_bordered((&data).is_bordered);
                     data.requires_update = true;
                 }
@@ -284,13 +285,13 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
         }
     }
 
-    if canvas.window().has_mouse_focus() && !(&data).should_render_props {
+    /*if canvas.window().has_mouse_focus() && !(&data).should_render_props {
         data.should_render_props = true;
         data.requires_update = true;
     } else if !canvas.window().has_mouse_focus() && (&data).should_render_props && !(&data).is_props_open {
         data.should_render_props = false;
         data.requires_update = true;
-    }
+    }*/
 
     // Skip rendering, for performance reasons
     if !(&data).requires_update {
