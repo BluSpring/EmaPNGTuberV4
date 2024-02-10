@@ -334,7 +334,9 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
 
             let ui = (*imgui).new_frame();
 
-            render_ui(ui, data);
+            if !render_ui(ui, data) {
+                return false;
+            }
 
             let draw_data = (*imgui).render();
 
@@ -427,7 +429,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     return true;
 }
 
-unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) {
+unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
     let window = ui.window("Properties")
         .size(Vector2::from([ 420.0, 356.0 ]), Condition::Always)
         .position(Vector2::from([ (512.0 / 2.0) - (420.0 / 2.0), (512.0 / 2.0) - (356.0 / 2.0) ]), Condition::Always)
@@ -445,20 +447,30 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) {
             (*timings).insert((*timings).len(), create_default_timing(data));
         }
 
-        if ui.button("Close") {
+        ui.same_line();
+
+        if ui.button("Close Properties") {
             data.is_props_open = false;
+        }
+
+        ui.same_line();
+
+        if ui.button("Exit PNGTuber") {
+            return false;
         }
 
         for timing in (*timings).iter_mut() {
             let group = ui.begin_group();
 
             if ui.collapsing_header(format!("Timing #{}##{}_group", id + 1, id), TreeNodeFlags::DEFAULT_OPEN) {
+                ui.indent_by(4.0);
                 if ui.button(format!("Remove##{}_remove", id)) {
                     (*(*data).speech_timings).remove(id);
                 }
 
-                ui.text("Should Bounce?");
-                ui.checkbox(format!("##{}_bounce", id), &mut timing.should_bounce);
+                ui.spacing();
+
+                ui.checkbox(format!("Should Bounce?##{}_bounce", id), &mut timing.should_bounce);
 
                 ui.text("Threshold (dB)");
                 ui.slider(format!("##{}_threshold", id), 0.0, 1.0, &mut timing.threshold);
@@ -477,6 +489,8 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) {
                 ui.text("Texture Path");
                 ui.input_text(format!("##{}_tex_path", id), &mut timing.texture_path)
                     .build();
+
+                ui.same_line();
 
                 if ui.button(format!("Open Path##{}_open_path", id)) {
                     let file = FileDialog::new()
@@ -503,6 +517,9 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) {
                         timing.texture = png_texture;
                     }
                 }
+
+                ui.spacing();
+                ui.spacing();
             }
 
             group.end();
@@ -512,4 +529,6 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) {
 
         window.unwrap().end();
     }
+
+    return true;
 }
