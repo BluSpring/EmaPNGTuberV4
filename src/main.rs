@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime};
 use imgui::{Condition, Context, TreeNodeFlags, Ui};
 use imgui::internal::{RawCast, RawWrapper};
 use mint::Vector2;
-use raw_window_handle::HasRawWindowHandle;
+use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use rfd::FileDialog;
 use sdl2::event::Event;
 use sdl2::EventPump;
@@ -22,6 +22,8 @@ use sdl2::sys::SDL_WindowFlags::SDL_WINDOW_SHOWN;
 use sdl2::ttf::Font;
 use sdl2::video::GLProfile;
 use sdl2_sys::{SDL_BlendFactor, SDL_BlendOperation, SDL_Color, SDL_ComposeCustomBlendMode, SDL_DestroyTexture, SDL_FPoint, SDL_RenderGeometry, SDL_SetRenderDrawBlendMode, SDL_Texture, SDL_Vertex};
+use winsafe::{COLORREF, HWND};
+use winsafe::co::{GWLP, LWA, WS_EX};
 use winsafe::prelude::*;
 
 use crate::imgui_support::SdlPlatform;
@@ -102,18 +104,18 @@ fn main() {
     canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
     canvas.clear();
 
-    /*unsafe {
+    unsafe {
         match canvas.window().raw_window_handle() {
             RawWindowHandle::Win32(handle) => {
-                let hwnd = handle.hwnd as *mut HWND;
+                let hwnd: HWND = Handle::from_ptr(handle.hwnd);
 
-                (*hwnd).SetWindowLongPtr(GWLP::EXSTYLE, (*hwnd).GetWindowLongPtr(GWLP::EXSTYLE) | (WS_EX::LAYERED.raw() as isize));
-                (*hwnd).SetLayeredWindowAttributes(COLORREF::new(0, 0, 0), 0, LWA::ALPHA).unwrap();
+                hwnd.SetWindowLongPtr(GWLP::EXSTYLE, hwnd.GetWindowLongPtr(GWLP::EXSTYLE) | (WS_EX::LAYERED.raw() as isize));
+                hwnd.SetLayeredWindowAttributes(COLORREF::new(14, 14, 14), 0, LWA::COLORKEY).unwrap();
             }
 
             _ => {}
         }
-    }*/
+    }
 
     canvas.present();
 
@@ -303,7 +305,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     let current_frame = SystemTime::now();
     let last_frame_time = SystemTime::now().duration_since((&data).last_frame).unwrap();
 
-    canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
+    canvas.set_draw_color(Color::RGBA(14, 14, 14, 0));
     canvas.clear();
 
     unsafe {
