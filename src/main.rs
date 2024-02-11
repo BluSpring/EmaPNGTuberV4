@@ -598,6 +598,17 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
                 // flicker problems, if you manage to fix it lmk
                 canvas.set_clip_rect(None);
 
+                let blend_mode = SDL_ComposeCustomBlendMode(
+                    SDL_BlendFactor::SDL_BLENDFACTOR_SRC_ALPHA,
+                    SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                    SDL_BlendOperation::SDL_BLENDOPERATION_ADD,
+                    SDL_BlendFactor::SDL_BLENDFACTOR_ONE,
+                    SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                    SDL_BlendOperation::SDL_BLENDOPERATION_ADD
+                );
+
+                SDL_SetRenderDrawBlendMode(canvas.raw(), blend_mode);
+
                 for cmd in list.commands() {
                     match cmd {
                         DrawCmd::Elements { count, cmd_params, .. } => {
@@ -607,6 +618,14 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
                             let texture: *mut SDL_Texture = (*sdl_tex).raw();
 
                             SDL_RenderGeometry(canvas.raw(), texture, vertices.offset(cmd_params.vtx_offset as isize), count as c_int, indices.offset(cmd_params.idx_offset as isize), count as c_int);
+                        }
+
+                        DrawCmd::RawCallback { callback, raw_cmd } => {
+                            callback(list.raw(), raw_cmd);
+                        }
+
+                        DrawCmd::ResetRenderState => {
+                            canvas.clear();
                         }
 
                         _ => {}
@@ -660,32 +679,6 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
         .begin();
 
     if window.is_some() {
-        let combo = ui.begin_combo("Input Device", data.input_device_name.clone());
-
-        if combo.is_some() {
-            let c = combo.unwrap();
-            for device in (*data.input_devices).iter() {
-                let name = device.name().unwrap();
-                ui.text(name.clone());
-
-                if name.clone() == data.input_device_name {
-                    ui.set_item_default_focus();
-                }
-
-                if ui.selectable(name.clone()) {
-                    data.input_device_name = name.clone();
-
-                    for x in data.host.input_devices().unwrap() {
-                        if x.name().unwrap() == name.clone() {
-                            let _ = data.input_device.insert(x);
-                        }
-                    }
-                }
-            }
-
-            c.end();
-        }
-
         let timings = data.speech_timings;
 
         if ui.button("Add Timing") {
@@ -703,6 +696,33 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
 
         if ui.button("Exit PNGTuber") {
             return false;
+        }
+
+        ui.text("Input Device");
+        ui.same_line();
+        let combo = ui.begin_combo("##input_device", data.input_device_name.clone());
+
+        if combo.is_some() {
+            let c = combo.unwrap();
+            for device in (*data.input_devices).iter() {
+                let name = device.name().unwrap();
+
+                if ui.selectable(name.clone()) {
+                    data.input_device_name = name.clone();
+
+                    for x in data.host.input_devices().unwrap() {
+                        if x.name().unwrap() == name.clone() {
+                            let _ = data.input_device.insert(x);
+                        }
+                    }
+                }
+
+                if name.clone() == data.input_device_name {
+                    ui.set_item_default_focus();
+                }
+            }
+
+            c.end();
         }
 
         for (id, timing) in (*timings).iter_mut().enumerate() {
