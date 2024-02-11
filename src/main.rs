@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use close_file::Closable;
 use cpal::{Device, Host};
 use cpal::traits::{DeviceTrait, HostTrait};
-use imgui::{Condition, Context, TreeNodeFlags, Ui};
+use imgui::{Condition, Context, DrawCmd, TreeNodeFlags, Ui};
 use imgui::internal::{RawCast, RawWrapper};
 use mint::Vector2;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
@@ -596,7 +596,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
                 }
 
                 // flicker problems, if you manage to fix it lmk
-                /*canvas.set_clip_rect(None);
+                canvas.set_clip_rect(None);
 
                 for cmd in list.commands() {
                     match cmd {
@@ -611,7 +611,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
 
                         _ => {}
                     }
-                }*/
+                }
             }
 
             // just render it all at once, it's easier lmao.
@@ -665,7 +665,22 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
         if combo.is_some() {
             let c = combo.unwrap();
             for device in (*data.input_devices).iter() {
-                ui.text(device.name().unwrap());
+                let name = device.name().unwrap();
+                ui.text(name.clone());
+
+                if name.clone() == data.input_device_name {
+                    ui.set_item_default_focus();
+                }
+
+                if ui.selectable(name.clone()) {
+                    data.input_device_name = name.clone();
+
+                    for x in data.host.input_devices().unwrap() {
+                        if x.name().unwrap() == name.clone() {
+                            let _ = data.input_device.insert(x);
+                        }
+                    }
+                }
             }
 
             c.end();
