@@ -12,7 +12,7 @@ use cpal::{Device, Host};
 use cpal::traits::{DeviceTrait, HostTrait};
 use imgui::{Condition, Context, DrawCmd, TreeNodeFlags, Ui};
 use imgui::internal::{RawCast, RawWrapper};
-use mint::Vector2;
+use mint::{Vector2, Vector3};
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use rfd::FileDialog;
 use sdl2::event::Event;
@@ -60,13 +60,17 @@ struct SharedData {
     current_max_frames: i32,
     current_frame: i32,
     host: Host,
-    input_device: Option<Device>
+    input_device: Option<Device>,
+    background_color: Vector3<f32>
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct SavedData {
     input_device: String,
-    speech_timings: Vec<SavedSpeechData>
+    speech_timings: Vec<SavedSpeechData>,
+    key_r: f32,
+    key_g: f32,
+    key_b: f32
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -115,7 +119,10 @@ fn create_missing_tex() -> Surface<'static> {
 fn save(shared_data: &mut SharedData) {
     let mut saved_data = SavedData {
         input_device: shared_data.input_device_name.clone(),
-        speech_timings: Vec::new()
+        speech_timings: Vec::new(),
+        key_r: shared_data.background_color.x,
+        key_g: shared_data.background_color.y,
+        key_b: shared_data.background_color.z
     };
 
     for (i, timing) in unsafe { (*shared_data.speech_timings).iter().clone() }.enumerate() {
@@ -168,6 +175,7 @@ fn load(shared_data: &mut SharedData) {
     let saved_data: SavedData = saved_data_opt.unwrap();
 
     shared_data.input_device_name = saved_data.input_device;
+    shared_data.background_color = Vector3::from([saved_data.key_r, saved_data.key_g, saved_data.key_b]);
     for (i, timing) in saved_data.speech_timings.iter().enumerate() {
         let texture_path = timing.texture_path.clone();
         let png_surface = Surface::from_file(texture_path).unwrap_or(create_missing_tex());
@@ -223,15 +231,6 @@ fn main() {
     canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
     canvas.clear();
 
-    unsafe {
-        if let RawWindowHandle::Win32(handle) = canvas.window().raw_window_handle() {
-            let hwnd: HWND = Handle::from_ptr(handle.hwnd);
-
-            hwnd.SetWindowLongPtr(GWLP::EXSTYLE, hwnd.GetWindowLongPtr(GWLP::EXSTYLE) | (WS_EX::LAYERED.raw() as isize));
-            hwnd.SetLayeredWindowAttributes(COLORREF::new(14, 14, 14), 0, LWA::COLORKEY).unwrap();
-        }
-    }
-
     canvas.present();
 
     let mut event_pump = sdl_context.event_pump().unwrap();
@@ -274,7 +273,8 @@ fn main() {
         input_device_index: 0,
         input_devices: &mut Vec::new(),
         input_device: None,
-        host: cpal::default_host()
+        host: cpal::default_host(),
+        background_color: Vector3::from([14.0 / 255.0, 14.0 / 255.0, 14.0 / 255.0])
     };
 
     imgui
@@ -309,6 +309,15 @@ fn main() {
 
     load(&mut data);
     update_input_devices(&mut data);
+
+    unsafe {
+        if let RawWindowHandle::Win32(handle) = canvas.window().raw_window_handle() {
+            let hwnd: HWND = Handle::from_ptr(handle.hwnd);
+
+            hwnd.SetWindowLongPtr(GWLP::EXSTYLE, hwnd.GetWindowLongPtr(GWLP::EXSTYLE) | (WS_EX::LAYERED.raw() as isize));
+            hwnd.SetLayeredWindowAttributes(COLORREF::new((data.background_color.x * 255.0) as u8, (data.background_color.y * 255.0) as u8, (data.background_color.z * 255.0) as u8), 0, LWA::COLORKEY).unwrap();
+        }
+    }
 
     unsafe {
         if (*data.speech_timings).is_empty() {
@@ -493,7 +502,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     let current_frame = SystemTime::now();
     let last_frame_time = SystemTime::now().duration_since(data.last_frame).unwrap();
 
-    canvas.set_draw_color(Color::RGBA(14, 14, 14, 0));
+    canvas.set_draw_color(Color::RGBA((data.background_color.x * 255.0) as u8, (data.background_color.y * 255.0) as u8, (data.background_color.z * 255.0) as u8, 0));
     canvas.clear();
 
     unsafe {
@@ -559,7 +568,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
 
             let ui = (*imgui).new_frame();
 
-            if !render_ui(ui, data) {
+            if !render_ui(canvas, ui, data) {
                 return false;
             }
 
@@ -669,7 +678,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     true
 }
 
-unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
+unsafe fn render_ui(canvas: &mut WindowCanvas, ui: &mut Ui, data: &mut SharedData) -> bool {
     let window = ui.window("Properties")
         .size(Vector2::from([ 420.0, 356.0 ]), Condition::Always)
         .position(Vector2::from([ (512.0 / 2.0) - (420.0 / 2.0), (512.0 / 2.0) - (356.0 / 2.0) ]), Condition::Always)
@@ -680,12 +689,6 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
 
     if window.is_some() {
         let timings = data.speech_timings;
-
-        if ui.button("Add Timing") {
-            (*timings).insert((*timings).len(), create_default_timing(data));
-        }
-
-        ui.same_line();
 
         if ui.button("Close Properties") {
             data.is_props_open = false;
@@ -725,10 +728,32 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
             c.end();
         }
 
+        let group = ui.begin_group();
+
+        if ui.collapsing_header("Change Keying Color", TreeNodeFlags::empty()) {
+            if ui.color_picker3_config("##color", &mut data.background_color)
+                .alpha(false)
+                .build() {
+                unsafe {
+                    if let RawWindowHandle::Win32(handle) = canvas.window().raw_window_handle() {
+                        let hwnd: HWND = Handle::from_ptr(handle.hwnd);
+
+                        hwnd.SetLayeredWindowAttributes(COLORREF::new((data.background_color.x * 255.0) as u8, (data.background_color.y * 255.0) as u8, (data.background_color.z * 255.0) as u8), 0, LWA::COLORKEY).unwrap();
+                    }
+                }
+            }
+        }
+
+        group.end();
+
+        if ui.button("Add Timing") {
+            (*timings).insert((*timings).len(), create_default_timing(data));
+        }
+
         for (id, timing) in (*timings).iter_mut().enumerate() {
             let group = ui.begin_group();
 
-            if ui.collapsing_header(format!("Timing #{}##{}_group", id + 1, id), TreeNodeFlags::DEFAULT_OPEN) {
+            if ui.collapsing_header(format!("Timing #{}##{}_group", id + 1, id), TreeNodeFlags::empty()) {
                 ui.indent_by(4.0);
                 if ui.button(format!("Remove##{}_remove", id)) {
                     (*data.speech_timings).remove(id);
