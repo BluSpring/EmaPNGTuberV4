@@ -310,14 +310,7 @@ fn main() {
     load(&mut data);
     update_input_devices(&mut data);
 
-    unsafe {
-        if let RawWindowHandle::Win32(handle) = canvas.window().raw_window_handle() {
-            let hwnd: HWND = Handle::from_ptr(handle.hwnd);
-
-            hwnd.SetWindowLongPtr(GWLP::EXSTYLE, hwnd.GetWindowLongPtr(GWLP::EXSTYLE) | (WS_EX::LAYERED.raw() as isize));
-            hwnd.SetLayeredWindowAttributes(COLORREF::new((data.background_color.x * 255.0) as u8, (data.background_color.y * 255.0) as u8, (data.background_color.z * 255.0) as u8), 0, LWA::COLORKEY).unwrap();
-        }
-    }
+    set_layered_window_attr(&mut canvas, &mut data);
 
     unsafe {
         if (*data.speech_timings).is_empty() {
@@ -326,12 +319,37 @@ fn main() {
             data.should_open_props = true;
             data.is_props_open = true;
             data.should_render_props = true;
+
+            set_layered_window_attr(&mut canvas, &mut data);
         }
     }
 
     'running: loop {
         if !render(&mut canvas, &mut event_pump, &font, &mut data) {
             break 'running;
+        }
+    }
+}
+
+fn set_layered_window_attr(canvas: &mut WindowCanvas, data: &mut SharedData) {
+    unsafe {
+        if let RawWindowHandle::Win32(handle) = canvas.window().raw_window_handle() {
+            let hwnd: HWND = Handle::from_ptr(handle.hwnd);
+
+            let opacity = if data.is_bordered {
+                255
+            } else {
+                0
+            };
+
+            let add = if data.is_bordered {
+                1
+            } else {
+                0
+            };
+
+            hwnd.SetWindowLongPtr(GWLP::EXSTYLE, hwnd.GetWindowLongPtr(GWLP::EXSTYLE) | (WS_EX::LAYERED.raw() as isize));
+            hwnd.SetLayeredWindowAttributes(COLORREF::new((data.background_color.x * 255.0) as u8, (data.background_color.y * 255.0) as u8, (data.background_color.z * 255.0) as u8), opacity, LWA::COLORKEY).unwrap();
         }
     }
 }
@@ -461,6 +479,8 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
                     data.should_render_props = !data.should_render_props;
                     window.set_bordered(data.is_bordered);
                     data.requires_update = true;
+
+                    set_layered_window_attr(canvas, data);
                 }
             }
 
@@ -734,13 +754,7 @@ unsafe fn render_ui(canvas: &mut WindowCanvas, ui: &mut Ui, data: &mut SharedDat
             if ui.color_picker3_config("##color", &mut data.background_color)
                 .alpha(false)
                 .build() {
-                unsafe {
-                    if let RawWindowHandle::Win32(handle) = canvas.window().raw_window_handle() {
-                        let hwnd: HWND = Handle::from_ptr(handle.hwnd);
-
-                        hwnd.SetLayeredWindowAttributes(COLORREF::new((data.background_color.x * 255.0) as u8, (data.background_color.y * 255.0) as u8, (data.background_color.z * 255.0) as u8), 0, LWA::COLORKEY).unwrap();
-                    }
-                }
+                set_layered_window_attr(canvas, data);
             }
         }
 
