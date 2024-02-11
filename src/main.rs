@@ -2,11 +2,14 @@ use std::ffi::{c_char, c_void, CString};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::mem::size_of;
+use std::ops::Index;
 use std::ptr::null_mut;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
 use close_file::Closable;
+use cpal::{Device, Host};
+use cpal::traits::{DeviceTrait, HostTrait};
 use imgui::{Condition, Context, TreeNodeFlags, Ui};
 use imgui::internal::{RawCast, RawWrapper};
 use mint::Vector2;
@@ -51,11 +54,13 @@ struct SharedData {
     imgui_platform: *mut SdlPlatform,
     imgui_fonts_texture: *mut Texture,
     is_bordered: bool,
-    input_device: String,
+    input_device_name: String,
     input_device_index: usize,
-    input_devices: *mut Vec<String>,
+    input_devices: *mut Vec<Device>,
     current_max_frames: i32,
     current_frame: i32,
+    host: Host,
+    input_device: Option<Device>
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -109,7 +114,7 @@ fn create_missing_tex() -> Surface<'static> {
 
 fn save(shared_data: &mut SharedData) {
     let mut saved_data = SavedData {
-        input_device: shared_data.input_device.clone(),
+        input_device: shared_data.input_device_name.clone(),
         speech_timings: Vec::new()
     };
 
@@ -162,7 +167,7 @@ fn load(shared_data: &mut SharedData) {
 
     let saved_data: SavedData = saved_data_opt.unwrap();
 
-    shared_data.input_device = saved_data.input_device;
+    shared_data.input_device_name = saved_data.input_device;
     for (i, timing) in saved_data.speech_timings.iter().enumerate() {
         let texture_path = timing.texture_path.clone();
         let png_surface = Surface::from_file(texture_path).unwrap_or(create_missing_tex());
@@ -265,9 +270,11 @@ fn main() {
         imgui_platform: &mut platform,
         imgui_fonts_texture: null_mut(),
         is_bordered: false,
-        input_device: String::from(""),
+        input_device_name: String::from(""),
         input_device_index: 0,
-        input_devices: &mut Vec::new()
+        input_devices: &mut Vec::new(),
+        input_device: None,
+        host: cpal::default_host()
     };
 
     imgui
@@ -301,6 +308,7 @@ fn main() {
     }
 
     load(&mut data);
+    update_input_devices(&mut data);
 
     unsafe {
         if (*data.speech_timings).is_empty() {
@@ -315,6 +323,60 @@ fn main() {
     'running: loop {
         if !render(&mut canvas, &mut event_pump, &font, &mut data) {
             break 'running;
+        }
+    }
+}
+
+fn update_input_devices(data: &mut SharedData) {
+    unsafe {
+        (*data.input_devices).clear();
+    }
+
+    for (i, input_device) in data.host.input_devices().unwrap().enumerate() {
+        unsafe {
+            (*data.input_devices).insert(i, input_device);
+        }
+    }
+
+    if data.input_device.is_none() {
+        if data.input_device_name.is_empty() {
+            let default = data.host.default_input_device();
+            if default.is_some() {
+                let unwrapped = default.unwrap();
+
+                data.input_device_name = unwrapped.name().unwrap();
+                let _ = data.input_device.insert(unwrapped);
+            }
+        } else {
+            unsafe {
+                for x in data.host.input_devices().unwrap() {
+                    if x.name().unwrap() == data.input_device_name {
+                        let _ = data.input_device.insert(x);
+                        break;
+                    }
+                }
+
+                if data.input_device.is_none() {
+                    let default = data.host.default_input_device();
+                    if default.is_some() {
+                        let _ = data.input_device.insert(default.unwrap());
+                    }
+                }
+            }
+        }
+
+        unsafe {
+            if data.input_device.is_some() {
+                let mut i = 0;
+                for x in (*data.input_devices).iter() {
+                    if x.name().unwrap() == data.input_device_name {
+                        data.input_device_index = i;
+                        break;
+                    }
+
+                    i += 1;
+                }
+            }
         }
     }
 }
@@ -598,6 +660,17 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
         .begin();
 
     if window.is_some() {
+        let combo = ui.begin_combo("Input Device", data.input_device_name.clone());
+
+        if combo.is_some() {
+            let c = combo.unwrap();
+            for device in (*data.input_devices).iter() {
+                ui.text(device.name().unwrap());
+            }
+
+            c.end();
+        }
+
         let timings = data.speech_timings;
 
         if ui.button("Add Timing") {
@@ -616,8 +689,6 @@ unsafe fn render_ui(ui: &mut Ui, data: &mut SharedData) -> bool {
         if ui.button("Exit PNGTuber") {
             return false;
         }
-
-        ui.combo_simple_string("Input Device", &mut data.input_device_index, &**data.input_devices);
 
         for (id, timing) in (*timings).iter_mut().enumerate() {
             let group = ui.begin_group();
