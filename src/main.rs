@@ -4,12 +4,12 @@ use std::io::{Read, Write};
 use std::mem::size_of;
 use std::ops::Index;
 use std::ptr::null_mut;
-use std::thread::sleep;
+use std::thread::{JoinHandle, sleep};
 use std::time::{Duration, SystemTime};
 
 use close_file::Closable;
-use cpal::{Device, Host};
-use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::{Device, Host, Stream};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use imgui::{Condition, Context, DrawCmd, TreeNodeFlags, Ui};
 use imgui::internal::{RawCast, RawWrapper};
 use mint::{Vector2, Vector3};
@@ -33,10 +33,12 @@ use serde::de::Error;
 use winsafe::{COLORREF, HWND};
 use winsafe::co::{GWLP, LWA, WS_EX};
 use winsafe::prelude::*;
+use crate::audio_handler::{SharedAudioData, spawn_audio_handler};
 
 use crate::imgui_support::SdlPlatform;
 
 mod imgui_support;
+mod audio_handler;
 
 struct SharedData {
     last_frame: SystemTime,
@@ -62,6 +64,8 @@ struct SharedData {
     host: Host,
     input_device: Option<Device>,
     background_color: Vector3<f32>,
+    audio_data: *mut SharedAudioData,
+    audio_thread: Option<Stream>
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -255,6 +259,11 @@ fn main() {
 
     let mut platform = SdlPlatform::init(&mut imgui);
 
+    let mut audio_data = SharedAudioData {
+        current_level: 0.0,
+        should_exit: false
+    };
+
     let mut data = SharedData {
         last_frame,
         current_velocity: 0.0,
@@ -278,7 +287,9 @@ fn main() {
         input_devices: &mut Vec::new(),
         input_device: None,
         host: cpal::default_host(),
-        background_color: Vector3::from([14.0 / 255.0, 14.0 / 255.0, 14.0 / 255.0])
+        background_color: Vector3::from([14.0 / 255.0, 14.0 / 255.0, 14.0 / 255.0]),
+        audio_data: &mut audio_data,
+        audio_thread: Option::None
     };
 
     imgui
@@ -313,6 +324,9 @@ fn main() {
 
     load(&mut data);
     update_input_devices(&mut data);
+
+    let audio_thread = spawn_audio_handler(&mut data);
+    data.audio_thread = Option::Some(audio_thread);
 
     set_layered_window_attr(&mut canvas, &mut data);
 
@@ -745,6 +759,14 @@ unsafe fn render_ui(canvas: &mut WindowCanvas, ui: &mut Ui, data: &mut SharedDat
                             let _ = data.input_device.insert(x);
                         }
                     }
+
+                    if data.audio_thread.is_some() {
+                        let fuck_off = std::mem::take(&mut data.audio_thread);
+                        let joined = fuck_off.unwrap();
+                        joined.pause().unwrap();
+                    }
+
+                    data.audio_thread = Option::Some(spawn_audio_handler(data));
                 }
 
                 if name.clone() == data.input_device_name {
