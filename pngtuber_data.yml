@@ -4,9 +4,10 @@ speech_timings:
   attack_time: 0.0
   release_time: 0.0
   texture_path: K:\BluSpringStudios\Dev\Stream\Apps\EmaPNGTuberV4\normal.png
+  height_reduction: 80
   should_bounce: false
   max_velocity: 12.0
   total_velocity_frames: 0
-key_r: 0.09411765
-key_g: 0.09411765
-key_b: 0.09411765
+key_r: 0.05490196
+key_g: 0.05490196
+key_b: 0.05490196

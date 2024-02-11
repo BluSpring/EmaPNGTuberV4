@@ -61,7 +61,7 @@ struct SharedData {
     current_frame: i32,
     host: Host,
     input_device: Option<Device>,
-    background_color: Vector3<f32>
+    background_color: Vector3<f32>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -79,6 +79,7 @@ struct SavedSpeechData {
     attack_time: f32,
     release_time: f32,
     texture_path: String,
+    height_reduction: i32,
 
     should_bounce: bool,
     max_velocity: f32,
@@ -95,6 +96,7 @@ struct SpeechTiming<'a> {
     max_velocity: f32,
     should_bounce: bool,
     total_velocity_frames: i32,
+    height_reduction: i32,
 }
 
 fn str_to_c(text: &str) -> *const c_char {
@@ -134,7 +136,8 @@ fn save(shared_data: &mut SharedData) {
 
             should_bounce: timing.should_bounce,
             max_velocity: timing.max_velocity,
-            total_velocity_frames: timing.total_velocity_frames
+            total_velocity_frames: timing.total_velocity_frames,
+            height_reduction: timing.height_reduction
         };
 
         saved_data.speech_timings.insert(i, speech_timing);
@@ -193,7 +196,8 @@ fn load(shared_data: &mut SharedData) {
 
             should_bounce: timing.should_bounce,
             max_velocity: timing.max_velocity,
-            total_velocity_frames: timing.total_velocity_frames
+            total_velocity_frames: timing.total_velocity_frames,
+            height_reduction: timing.height_reduction
         };
 
         let timings = shared_data.speech_timings;
@@ -420,7 +424,8 @@ fn create_default_timing(data: &mut SharedData) -> SpeechTiming<'static> {
         max_velocity: 12.0,
         should_bounce: false,
         texture_path: String::from(""),
-        total_velocity_frames: 0
+        total_velocity_frames: 0,
+        height_reduction: 32
     }
 }
 
@@ -441,9 +446,11 @@ unsafe fn render_pngtuber(window_size: (u32, u32), data: &mut SharedData) {
     let width = surface.width();
     let height = surface.height();
 
-    let height_percent = ((window_size.1 - 24) as f64) / (height as f64);
+    let window_height = window_size.1 - (timing.height_reduction as u32);
+
+    let height_percent = (window_height as f64) / (height as f64);
     let new_width = ((width as f64) * height_percent) as u32;
-    (*canvas).copy(tex, None, Option::from(Rect::new(((window_size.0 / 2) - new_width / 2) as i32, 0, new_width, height))).unwrap();
+    (*canvas).copy(tex, None, Option::from(Rect::new(((window_size.0 / 2) - new_width / 2) as i32, (window_size.1 - window_height) as i32, new_width, window_height))).unwrap();
 }
 
 fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, data: &mut SharedData) -> bool {
@@ -825,6 +832,9 @@ unsafe fn render_ui(canvas: &mut WindowCanvas, ui: &mut Ui, data: &mut SharedDat
                         timing.texture = png_texture;
                     }
                 }
+
+                ui.text("Height Reduction");
+                ui.slider(format!("##{}_height_reduce", id), 0, 500, &mut timing.height_reduction);
 
                 ui.spacing();
                 ui.spacing();
