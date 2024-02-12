@@ -40,6 +40,8 @@ use crate::imgui_support::SdlPlatform;
 mod imgui_support;
 mod audio_handler;
 
+const SHOW_FPS: bool = false;
+
 struct SharedData {
     last_frame: SystemTime,
     current_velocity: f64,
@@ -621,14 +623,21 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
 
     canvas.copy(&pngtuber_tex, None, None).unwrap();
 
-    // Render total FPS, not actually needed
-    let text = font.render(&format!("{} FPS", (1f32 / ((last_frame_time.as_millis() as f32) / 1000.0)) as u32))
-        .solid(Color::WHITE)
-        .unwrap();
+    if SHOW_FPS {
+        // Render total FPS, not actually needed
+        let text = font.render(&format!("{} FPS", (1f32 / ((last_frame_time.as_millis() as f32) / 1000.0)) as u32))
+            .solid(Color::WHITE)
+            .unwrap();
 
-    let text_tex = canvas.create_texture_from_surface(&text).unwrap();
+        let text_tex = canvas.create_texture_from_surface(&text).unwrap();
 
-    canvas.copy(&text_tex, None, Option::from(Rect::new(0, 0, text.width(), text.height()))).unwrap();
+        canvas.copy(&text_tex, None, Option::from(Rect::new(0, 0, text.width(), text.height()))).unwrap();
+
+        drop(text.context());
+        unsafe {
+            text_tex.destroy();
+        }
+    }
 
     // Render settings button
     if data.should_render_props {
@@ -653,9 +662,7 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     }
 
     // Free some memory
-    drop(text.context());
     unsafe {
-        text_tex.destroy();
         pngtuber_tex.destroy();
     }
 
