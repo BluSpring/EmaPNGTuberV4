@@ -876,10 +876,10 @@ unsafe fn render_ui(canvas: &mut WindowCanvas, ui: &mut Ui, data: &mut SharedDat
                 ui.slider(format!("##{}_threshold", id), -30.0, 30.0, &mut timing.threshold);
 
                 ui.text("Attack (ms)");
-                ui.slider(format!("##{}_attack", id), 0.0, 150.0, &mut timing.attack_time);
+                ui.slider(format!("##{}_attack", id), 0.0, 350.0, &mut timing.attack_time);
 
                 ui.text("Release (ms)");
-                ui.slider(format!("##{}_release", id), 0.0, 150.0, &mut timing.release_time);
+                ui.slider(format!("##{}_release", id), 0.0, 350.0, &mut timing.release_time);
 
                 if timing.should_bounce {
                     ui.text("Total Bounce Frames");
