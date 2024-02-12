@@ -46,6 +46,7 @@ struct SharedData {
     current_max_velocity: f64,
     is_speaking: bool,
     speech_timings: *mut Vec<SpeechTiming<'static>>,
+    current_timing: Option<*const SpeechTiming<'static>>,
     requires_update: bool,
     should_hover: bool,
     should_open_props: bool,
@@ -65,7 +66,9 @@ struct SharedData {
     input_device: Option<Device>,
     background_color: Vector3<f32>,
     audio_data: *mut SharedAudioData,
-    audio_thread: Option<Stream>
+    audio_thread: Option<Stream>,
+    total_audio_time: u128,
+    time_active: f32
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -272,6 +275,9 @@ fn main() {
         current_max_frames: 0,
         is_speaking: false,
         speech_timings: &mut Vec::new(),
+        total_audio_time: 0u128,
+        time_active: 0.0f32,
+        current_timing: None,
         requires_update: true,
         should_render_props: false,
         should_hover: false,
@@ -448,23 +454,74 @@ fn is_over_button(window_width: i32, x: i32, y: i32) -> bool {
 }
 
 unsafe fn render_pngtuber(window_size: (u32, u32), data: &mut SharedData) {
-    let canvas = data.pngtuber_canvas;
-    if (*data.speech_timings).is_empty() {
+    let canvas = (&data).pngtuber_canvas;
+    if (&data).current_timing.is_none() {
         return;
     }
 
-    let timing = unsafe { (*data.speech_timings).first() }.unwrap();
-    let surface = &timing.texture_surface;
-    let tex = &timing.texture;
+    let timing = *(&data).current_timing.as_ref().unwrap();
+    let surface = &(*timing).texture_surface;
+    let tex = &(*timing).texture;
 
     let width = surface.width();
     let height = surface.height();
 
-    let window_height = window_size.1 - (timing.height_reduction as u32);
+    let window_height = window_size.1 - ((*timing).height_reduction as u32);
 
     let height_percent = (window_height as f64) / (height as f64);
     let new_width = ((width as f64) * height_percent) as u32;
-    (*canvas).copy(tex, None, Option::from(Rect::new(((window_size.0 / 2) - new_width / 2) as i32, (window_size.1 - window_height) as i32, new_width, window_height))).unwrap();
+    (*canvas).copy(&tex, None, Option::from(Rect::new(((window_size.0 / 2) - new_width / 2) as i32, ((window_size.1 - window_height) + (data.current_velocity.round() as u32)) as i32, new_width, window_height))).unwrap();
+}
+
+const NANOS_TO_MILLIS: f64 = 1e6;
+
+fn tick_pngtuber(data: &mut SharedData, nanos_since_last_frame: u128) {
+    let mut current_timing = &mut (*data).current_timing;
+    let mut tracked_timing: Option<&SpeechTiming> = Option::None;
+
+    unsafe {
+        for mut timing in (*data.speech_timings).iter() {
+            if tracked_timing.is_none() {
+                if (*data.audio_data).current_level >= timing.threshold {
+                    let _ = tracked_timing.insert(timing);
+                }
+                continue;
+            }
+
+            let current = tracked_timing.unwrap();
+            if timing.threshold <= (*data.audio_data).current_level && timing.threshold >= current.threshold {
+                let _ = tracked_timing.insert(timing);
+            }
+        }
+
+        if tracked_timing.is_none() {
+            return;
+        }
+
+        if (&current_timing).is_some() && tracked_timing.unwrap().threshold != (*(&current_timing).unwrap()).threshold {
+            data.total_audio_time += nanos_since_last_frame;
+            data.time_active = 0.0;
+        } else if data.time_active > 0.0 {
+            data.total_audio_time = 0;
+            data.time_active = 0.0;
+        }
+
+        let total_time_millis = ((data.total_audio_time as f64) / NANOS_TO_MILLIS) as f32;
+
+        if (
+            ((&current_timing).is_some() && ((
+                (*(&current_timing).unwrap()).threshold != tracked_timing.unwrap().threshold && (*(&current_timing).unwrap()).release_time <= total_time_millis
+            ) || (*(&current_timing).unwrap()).threshold == tracked_timing.unwrap().threshold)
+        ) || (&current_timing).is_none()) &&
+            (tracked_timing.unwrap().attack_time <= total_time_millis || tracked_timing.unwrap().attack_time == 0.0)
+            && data.time_active == 0.0
+        {
+            data.time_active += total_time_millis;
+            data.total_audio_time = 0;
+            let _ = (*current_timing).insert(tracked_timing.unwrap());
+            data.requires_update = true;
+        }
+    }
 }
 
 fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, data: &mut SharedData) -> bool {
@@ -530,8 +587,14 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
         data.requires_update = true;
     }*/
 
+    let current_frame = SystemTime::now();
+    let last_frame_time = SystemTime::now().duration_since(data.last_frame).unwrap();
+
+    tick_pngtuber(data, last_frame_time.as_nanos());
+
     // Skip rendering, for performance reasons
     if !data.requires_update {
+        data.last_frame = current_frame;
         sleep(Duration::new(0, 1_000_000_000u32 / refresh_rate));
         return true;
     }
@@ -539,9 +602,6 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
     if !data.is_props_open {
         data.requires_update = false;
     }
-
-    let current_frame = SystemTime::now();
-    let last_frame_time = SystemTime::now().duration_since(data.last_frame).unwrap();
 
     canvas.set_draw_color(Color::RGBA((data.background_color.x * 255.0) as u8, (data.background_color.y * 255.0) as u8, (data.background_color.z * 255.0) as u8, 0));
     canvas.clear();
@@ -807,7 +867,7 @@ unsafe fn render_ui(canvas: &mut WindowCanvas, ui: &mut Ui, data: &mut SharedDat
                 ui.checkbox(format!("Should Bounce?##{}_bounce", id), &mut timing.should_bounce);
 
                 ui.text("Threshold (dB)");
-                ui.slider(format!("##{}_threshold", id), 0.0, 1.0, &mut timing.threshold);
+                ui.slider(format!("##{}_threshold", id), -30.0, 30.0, &mut timing.threshold);
 
                 ui.text("Attack (ms)");
                 ui.slider(format!("##{}_attack", id), 0.0, 150.0, &mut timing.attack_time);

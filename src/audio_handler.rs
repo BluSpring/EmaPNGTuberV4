@@ -33,7 +33,7 @@ pub fn spawn_audio_handler(data: &mut SharedData) -> Stream {
                 sum += *x * *x;
             }
 
-            audio_data.current_level = sum.sqrt();
+            audio_data.current_level = mul_to_db(sum.sqrt());
         },
         move |err| {
             eprintln!("{}", err);
