@@ -503,7 +503,6 @@ fn tick_pngtuber(data: &mut SharedData, nanos_since_last_frame: u128) {
             data.time_active = 0.0;
         } else if data.time_active > 0.0 {
             data.total_audio_time = 0;
-            data.time_active = 0.0;
         }
 
         let total_time_millis = ((data.total_audio_time as f64) / NANOS_TO_MILLIS) as f32;
