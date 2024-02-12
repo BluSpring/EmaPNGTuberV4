@@ -476,6 +476,7 @@ unsafe fn render_pngtuber(window_size: (u32, u32), data: &mut SharedData) {
 }
 
 const NANOS_TO_MILLIS: f64 = 1e6;
+const MILLIS_TO_SECS: f64 = 1000f64;
 
 fn tick_pngtuber(data: &mut SharedData, nanos_since_last_frame: u128) {
     let mut current_timing = &mut (*data).current_timing;
@@ -503,6 +504,8 @@ fn tick_pngtuber(data: &mut SharedData, nanos_since_last_frame: u128) {
         if (&current_timing).is_some() && tracked_timing.unwrap().threshold != (*(&current_timing).unwrap()).threshold {
             data.total_audio_time += nanos_since_last_frame;
             data.time_active = 0.0;
+            data.current_velocity = 0.0;
+            data.current_frame = 0;
         } else if data.time_active > 0.0 {
             data.total_audio_time = 0;
         }
@@ -519,10 +522,26 @@ fn tick_pngtuber(data: &mut SharedData, nanos_since_last_frame: u128) {
         {
             data.time_active += total_time_millis;
             data.total_audio_time = 0;
+            data.current_max_velocity = tracked_timing.unwrap().max_velocity as f64;
+            data.current_max_frames = tracked_timing.unwrap().total_velocity_frames;
             let _ = (*current_timing).insert(tracked_timing.unwrap());
             data.requires_update = true;
         }
+
+        if data.time_active > 0.0 && ((&current_timing).is_some()) && (*(&current_timing).unwrap()).should_bounce && data.current_frame < (*(&current_timing).unwrap()).total_velocity_frames {
+            data.current_frame += (1.0 / (((nanos_since_last_frame as f64) / NANOS_TO_MILLIS) / MILLIS_TO_SECS)) as i32;
+            data.current_velocity = interpolate_velocity(data.current_max_velocity, data.current_frame, data.current_max_frames);
+            if data.current_frame > data.current_max_frames {
+                data.current_frame = data.current_max_frames;
+            }
+            data.requires_update = true;
+        }
     }
+}
+
+fn interpolate_velocity(max_velocity: f64, current_frame: i32, max_frame: i32) -> f64 {
+    let frame_relative = (current_frame as f64) / (max_frame as f64);
+    return (2.0 * (1.0 - frame_relative) * frame_relative * (max_velocity * max_velocity));
 }
 
 fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, data: &mut SharedData) -> bool {

@@ -14,8 +14,8 @@ speech_timings:
   texture_path: K:\BluSpringStudios\Dev\Stream\Apps\EmaPNGTuberV4\speaking.png
   height_reduction: 80
   should_bounce: true
-  max_velocity: 3.735
-  total_velocity_frames: 0
+  max_velocity: 4.981
+  total_velocity_frames: 156
 - threshold: 19.26
   attack_time: 31.518
   release_time: 150.0
