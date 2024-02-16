@@ -1,3 +1,5 @@
 /target
 *.dll
 .idea/
+*.png
+*.yml
