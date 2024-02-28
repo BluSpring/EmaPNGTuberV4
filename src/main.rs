@@ -41,8 +41,8 @@ use crate::imgui_support::SdlPlatform;
 mod imgui_support;
 mod audio_handler;
 
-const SHOW_DEBUG: bool = true;
-const DEBUG_ALWAYS_UPDATE: bool = true;
+const SHOW_DEBUG: bool = false;
+const DEBUG_ALWAYS_UPDATE: bool = false;
 
 struct SharedData {
     last_frame: SystemTime,
