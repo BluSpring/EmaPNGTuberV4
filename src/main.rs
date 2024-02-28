@@ -13,6 +13,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use imgui::{Condition, Context, DrawCmd, TreeNodeFlags, Ui};
 use imgui::internal::{RawCast, RawWrapper};
 use mint::{Vector2, Vector3};
+use pitch_detection::detector::mcleod::McLeodDetector;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use rfd::FileDialog;
 use sdl2::event::Event;
@@ -40,7 +41,8 @@ use crate::imgui_support::SdlPlatform;
 mod imgui_support;
 mod audio_handler;
 
-const SHOW_FPS: bool = false;
+const SHOW_DEBUG: bool = true;
+const DEBUG_ALWAYS_UPDATE: bool = true;
 
 struct SharedData {
     last_frame: SystemTime,
@@ -266,7 +268,8 @@ fn main() {
 
     let mut audio_data = SharedAudioData {
         current_level: 0.0,
-        should_exit: false
+        current_pitch: 0.0,
+        should_exit: false,
     };
 
     let mut data = SharedData {
@@ -612,6 +615,10 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
 
     tick_pngtuber(data, last_frame_time.as_nanos());
 
+    if DEBUG_ALWAYS_UPDATE {
+        data.requires_update = true;
+    }
+
     // Skip rendering, for performance reasons
     if !data.requires_update {
         data.last_frame = current_frame;
@@ -642,19 +649,36 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
 
     canvas.copy(&pngtuber_tex, None, None).unwrap();
 
-    if SHOW_FPS {
-        // Render total FPS, not actually needed
-        let text = font.render(&format!("{} FPS", (1f32 / ((last_frame_time.as_millis() as f32) / 1000.0)) as u32))
-            .solid(Color::WHITE)
-            .unwrap();
-
-        let text_tex = canvas.create_texture_from_surface(&text).unwrap();
-
-        canvas.copy(&text_tex, None, Option::from(Rect::new(0, 0, text.width(), text.height()))).unwrap();
-
-        drop(text.context());
+    if SHOW_DEBUG {
         unsafe {
-            text_tex.destroy();
+            let fps_text = font.render(&format!("{} FPS", (1f32 / ((last_frame_time.as_millis() as f32) / 1000.0)) as u32))
+                .solid(Color::WHITE)
+                .unwrap();
+
+            let fps_tex = canvas.create_texture_from_surface(&fps_text).unwrap();
+
+            let volume_text = font.render(&format!("Volume: {}", (*data.audio_data).current_level))
+                .solid(Color::WHITE)
+                .unwrap();
+
+            let volume_tex = canvas.create_texture_from_surface(&volume_text).unwrap();
+
+            let pitch_text = font.render(&format!("Volume: {}", (*data.audio_data).current_pitch))
+                .solid(Color::WHITE)
+                .unwrap();
+
+            let pitch_tex = canvas.create_texture_from_surface(&pitch_text).unwrap();
+
+            canvas.copy(&fps_tex, None, Option::from(Rect::new(0, 0, fps_text.width(), fps_text.height()))).unwrap();
+            canvas.copy(&volume_tex, None, Option::from(Rect::new(0, 15, volume_text.width(), volume_text.height()))).unwrap();
+            canvas.copy(&pitch_tex, None, Option::from(Rect::new(0, 31, pitch_text.width(), pitch_text.height()))).unwrap();
+
+            drop(fps_text.context());
+            drop(volume_text.context());
+            drop(pitch_text.context());
+            fps_tex.destroy();
+            volume_tex.destroy();
+            pitch_tex.destroy();
         }
     }
 
