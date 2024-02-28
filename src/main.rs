@@ -13,7 +13,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use imgui::{Condition, Context, DrawCmd, TreeNodeFlags, Ui};
 use imgui::internal::{RawCast, RawWrapper};
 use mint::{Vector2, Vector3};
-use pitch_detection::detector::mcleod::McLeodDetector;
+//use pitch_detection::detector::mcleod::McLeodDetector;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use rfd::FileDialog;
 use sdl2::event::Event;

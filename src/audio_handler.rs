@@ -4,8 +4,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use cpal::{Device, Stream};
 use cpal::traits::{DeviceTrait, StreamTrait};
-use pitch_detection::detector::mcleod::McLeodDetector;
-use pitch_detection::detector::PitchDetector;
+//use pitch_detection::detector::mcleod::McLeodDetector;
+//use pitch_detection::detector::PitchDetector;
 use crate::SharedData;
 
 pub struct SharedAudioData {
