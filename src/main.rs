@@ -322,11 +322,11 @@ fn main() {
 
     unsafe {
         let blend_mode = SDL_ComposeCustomBlendMode(
-            SDL_BlendFactor::SDL_BLENDFACTOR_SRC_ALPHA,
-            SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_COLOR,
+            SDL_BlendFactor::SDL_BLENDFACTOR_DST_COLOR,
             SDL_BlendOperation::SDL_BLENDOPERATION_ADD,
-            SDL_BlendFactor::SDL_BLENDFACTOR_ONE,
             SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            SDL_BlendFactor::SDL_BLENDFACTOR_DST_ALPHA,
             SDL_BlendOperation::SDL_BLENDOPERATION_ADD
         );
 
