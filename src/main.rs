@@ -322,10 +322,10 @@ fn main() {
 
     unsafe {
         let blend_mode = SDL_ComposeCustomBlendMode(
-            SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_COLOR,
+            SDL_BlendFactor::SDL_BLENDFACTOR_SRC_COLOR,
             SDL_BlendFactor::SDL_BLENDFACTOR_DST_COLOR,
             SDL_BlendOperation::SDL_BLENDOPERATION_ADD,
-            SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            SDL_BlendFactor::SDL_BLENDFACTOR_SRC_ALPHA,
             SDL_BlendFactor::SDL_BLENDFACTOR_DST_ALPHA,
             SDL_BlendOperation::SDL_BLENDOPERATION_ADD
         );
@@ -758,11 +758,11 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
                 canvas.set_clip_rect(None);
 
                 let blend_mode = SDL_ComposeCustomBlendMode(
-                    SDL_BlendFactor::SDL_BLENDFACTOR_SRC_ALPHA,
-                    SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                    SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_COLOR,
+                    SDL_BlendFactor::SDL_BLENDFACTOR_DST_COLOR,
                     SDL_BlendOperation::SDL_BLENDOPERATION_ADD,
-                    SDL_BlendFactor::SDL_BLENDFACTOR_ONE,
                     SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                    SDL_BlendFactor::SDL_BLENDFACTOR_DST_ALPHA,
                     SDL_BlendOperation::SDL_BLENDOPERATION_ADD
                 );
 
@@ -796,11 +796,11 @@ fn render(canvas: &mut WindowCanvas, event_pump: &mut EventPump, font: &Font, da
             canvas.set_clip_rect(Rect::new((512 / 2) - (420 / 2), (512 / 2) - (356 / 2), 420, 356));
 
             let blend_mode = SDL_ComposeCustomBlendMode(
-                SDL_BlendFactor::SDL_BLENDFACTOR_SRC_ALPHA,
-                SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_COLOR,
+                SDL_BlendFactor::SDL_BLENDFACTOR_DST_COLOR,
                 SDL_BlendOperation::SDL_BLENDOPERATION_ADD,
-                SDL_BlendFactor::SDL_BLENDFACTOR_ONE,
                 SDL_BlendFactor::SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                SDL_BlendFactor::SDL_BLENDFACTOR_DST_ALPHA,
                 SDL_BlendOperation::SDL_BLENDOPERATION_ADD
             );
 
